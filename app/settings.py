@@ -32,15 +32,3 @@ DATECS_DETECT_TIMEOUT_MS = int(os.getenv("PRINT_GATEWAY_DETECT_TIMEOUT_MS", "600
 GLOBAL_DRY_RUN = _env_bool("PRINT_GATEWAY_DRY_RUN", False)
 
 STATIC_DIR = ROOT_DIR / "app" / "static"
-
-# ── MQTT ──────────────────────────────────────────────────────────
-MQTT_ENABLED = _env_bool("MQTT_ENABLED", False)
-MQTT_BROKER_HOST = os.getenv("MQTT_BROKER_HOST", "")
-MQTT_BROKER_PORT = int(os.getenv("MQTT_BROKER_PORT", "1883"))
-MQTT_USERNAME = os.getenv("MQTT_USERNAME", "")
-MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "")
-MQTT_CLIENT_ID = os.getenv("MQTT_CLIENT_ID", "fiscal-api")
-MQTT_TOPIC_PREFIX = os.getenv("MQTT_TOPIC_PREFIX", "fiscal")
-MQTT_QOS = int(os.getenv("MQTT_QOS", "1"))
-MQTT_KEEPALIVE = int(os.getenv("MQTT_KEEPALIVE", "60"))
-MQTT_USE_TLS = _env_bool("MQTT_USE_TLS", False)
