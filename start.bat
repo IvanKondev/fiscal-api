@@ -51,7 +51,7 @@ if %errorlevel% neq 0 (
 )
 
 :: Open browser after a short delay
-start "" cmd /c "timeout /t 2 /nobreak >nul & start http://127.0.0.1:8787"
+start /b "" cmd /c "ping -n 3 127.0.0.1 >nul & start "" http://127.0.0.1:8787"
 
 echo [OK] Starting server...
 echo.
