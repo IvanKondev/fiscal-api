@@ -457,3 +457,9 @@ def sync_printer_datetime(printer_id: int, payload: Dict[str, Any] | None = Body
 @router.get("/tools/models")
 def supported_models() -> Dict[str, Any]:
     return {"models": list_supported_models()}
+
+
+@router.get("/mqtt/status")
+def mqtt_status() -> Dict[str, Any]:
+    from app.mqtt_client import mqtt_bridge
+    return mqtt_bridge.get_status()
