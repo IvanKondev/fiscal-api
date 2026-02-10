@@ -590,6 +590,7 @@ function App() {
       operator_password: operator?.password,
       operator_till: operator?.till,
       operator_name: fiscalSale.operator.name?.trim() || undefined,
+      nsale: fiscalSale.nsale?.trim() || undefined,
       items,
       payments,
     };
@@ -1268,7 +1269,23 @@ function App() {
                       <button onClick={() => refreshPrinterInfo(printer.id)} disabled={loading}>
                         🔄 Обнови инфо
                       </button>
-                      <button onClick={() => handleEdit(printer)}>Edit</button>
+                      <button onClick={async () => {
+                        const newName = window.prompt("Ново име на принтера:", printer.name);
+                        if (newName && newName.trim() && newName.trim() !== printer.name) {
+                          try {
+                            await apiRequest(`/printers/${printer.id}`, {
+                              method: "PUT",
+                              body: JSON.stringify({ name: newName.trim() }),
+                            });
+                            setStatus({ type: "success", message: "Името е обновено." });
+                            await refreshPrinters();
+                          } catch (error) {
+                            setStatus({ type: "error", message: error.message });
+                          }
+                        }
+                      }}>
+                        ✏️ Преименувай
+                      </button>
                       <button
                         className="danger"
                         onClick={() => handleDelete(printer.id)}
@@ -1500,6 +1517,16 @@ function App() {
               {fiscalValidation.errors.operator && (
                 <span className="inline-error">{fiscalValidation.errors.operator}</span>
               )}
+              <div className="row">
+                <label>
+                  УНП (опционално)
+                  <input
+                    value={fiscalSale.nsale || ""}
+                    onChange={(event) => setFiscalSale((c) => ({ ...c, nsale: event.target.value }))}
+                    placeholder="DT998016-0001-0000001"
+                  />
+                </label>
+              </div>
               <div className="items">
                 <div className="card-header">
                   <h3>Артикули</h3>

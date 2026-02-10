@@ -1006,7 +1006,12 @@ def _report_command(payload: Dict[str, Any]) -> int:
     return int(text)
 
 
-def _build_storno_data(payload: Dict[str, Any]) -> str:
+def _build_storno_data(payload: Dict[str, Any], sep: str = ",") -> str:
+    """Build storno reference data.
+
+    FP-2000  (byte): comma-separated
+    FP-700MX (hex4): TAB-separated with trailing TAB
+    """
     st_type = payload.get("storno_type", payload.get("type", 0))
     original = payload.get("original", {}) or {}
     doc_no = original.get("doc_no") or original.get("document") or ""
@@ -1022,7 +1027,10 @@ def _build_storno_data(payload: Dict[str, Any]) -> str:
         parts.append(str(fm))
     if unp:
         parts.append(str(unp))
-    return ",".join(parts)
+    result = sep.join(parts)
+    if sep == "\t":
+        result += "\t"
+    return result
 
 
 def fiscal_operation(
@@ -1215,9 +1223,19 @@ def fiscal_operation(
                 "correlation_id": correlation_id,
             }
         if payload_type == "storno":
-            operator_data = _operator_data(payload, printer)
-            storno_data = _build_storno_data(payload)
-            data = f"{operator_data},{storno_data}" if operator_data else storno_data
+            proto = getattr(adapter, "protocol_format", "hex4")
+            if proto == "byte":
+                # FP-2000: <OpCode>,<Password>,<TillNum>,<StornoType>,<DocNo>,<Date>[,<FM>][,<UNP>]
+                operator_data = _operator_data(payload, printer)
+                # _operator_data returns TAB-separated; convert to comma for FP-2000
+                operator_csv = operator_data.replace("\t", ",").rstrip(",")
+                storno_data = _build_storno_data(payload, sep=",")
+                data = f"{operator_csv},{storno_data}" if operator_csv else storno_data
+            else:
+                # FP-700MX: <OpCode><SEP><Password><SEP><TillNum><SEP><StornoType><SEP><DocNo><SEP><Date><SEP>[<FM><SEP>][<UNP><SEP>]
+                operator_data = _operator_data(payload, printer)
+                storno_data = _build_storno_data(payload, sep="\t")
+                data = f"{operator_data}{storno_data}" if operator_data else storno_data
             seq = _send(
                 transport,
                 adapter,
