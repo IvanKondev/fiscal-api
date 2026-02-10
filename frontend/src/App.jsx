@@ -336,7 +336,7 @@ function App() {
   const [reportLoading, setReportLoading] = useState(false);
   const [fiscalSale, setFiscalSale] = useState({
     printerId: "",
-    operator: { id: "", password: "", till: "" },
+    operator: { id: "", password: "", till: "", name: "" },
     items: [createFiscalItem()],
     payments: [createPayment()],
   });
@@ -436,6 +436,7 @@ function App() {
       id: operator.id?.toString() || "",
       password: operator.password?.toString() || "",
       till: operator.till?.toString() || "",
+      name: operator.name?.toString() || "",
     };
   };
 
@@ -585,6 +586,7 @@ function App() {
       operator_id: operator?.id,
       operator_password: operator?.password,
       operator_till: operator?.till,
+      operator_name: fiscalSale.operator.name?.trim() || undefined,
       items,
       payments,
     };
@@ -954,8 +956,6 @@ function App() {
   useEffect(() => {
     if (printers.length > 0) {
       checkAllPrinterStatuses();
-      const interval = setInterval(checkAllPrinterStatuses, 30000);
-      return () => clearInterval(interval);
     }
   }, [printers]);
 
@@ -1598,6 +1598,14 @@ function App() {
                     onChange={(event) => updateFiscalSaleOperator("till", event.target.value)}
                     placeholder="1"
                     className={fiscalValidation.errors.operator ? "field-error" : ""}
+                  />
+                </label>
+                <label>
+                  Име (сервитьор)
+                  <input
+                    value={fiscalSale.operator.name}
+                    onChange={(event) => updateFiscalSaleOperator("name", event.target.value)}
+                    placeholder="Иван Иванов"
                   />
                 </label>
               </div>

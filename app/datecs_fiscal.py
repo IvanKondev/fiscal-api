@@ -28,6 +28,7 @@ CMD_LAST_ERROR = 0x20
 CMD_SET_DATE_TIME = 0x3D
 CMD_READ_DATE_TIME = 0x3E
 CMD_NRA_DATA = 0x25
+CMD_SET_OPERATOR_NAME = 0x66
 
 DATECS_ERROR_DETAILS = {
     -111018: "ERR_R_PAY_STARTED - Registration mode error: Payment is initiated.",
@@ -359,6 +360,7 @@ def _send_with_response(
         "storno payment",
         "storno close",
         "nra data",
+        "set operator name",
     }:
         log_info(
             "DATECS_SEND",
@@ -748,6 +750,21 @@ def _preflight_cleanup(
             "correlation_id": correlation_id,
         },
     )
+
+    # Block early if printer has a hardware problem
+    hw_errors = []
+    if status_flags.get("cover_open"):
+        hw_errors.append("Капакът на принтера е отворен")
+    if status_flags.get("no_paper"):
+        hw_errors.append("Няма хартия в принтера")
+    if status_flags.get("printing_unit_fault"):
+        hw_errors.append("Повреда в печатащото устройство")
+    if hw_errors:
+        raise DatecsFiscalError(
+            f"Принтерът не е готов: {'; '.join(hw_errors)}",
+            context="preflight",
+        )
+
     seq = _transaction_status_snapshot(
         transport,
         adapter,
@@ -774,6 +791,56 @@ def _preflight_cleanup(
             timeout_s,
             printer_id,
             correlation_id=correlation_id,
+        )
+    return seq
+
+
+def _set_operator_name(
+    transport: BaseTransport,
+    adapter: DatecsBaseAdapter,
+    op_num: str,
+    name: str,
+    password: str,
+    seq: int,
+    timeout_s: float,
+    printer_id: int,
+    correlation_id: str | None = None,
+) -> int:
+    """Program operator name on printer (Datecs CMD 0x66).
+    Data format: <OpNum>\t<Name>\t<Password>\t
+    """
+    data = f"{op_num}\t{name}\t{password}\t"
+    try:
+        seq = _send(
+            transport,
+            adapter,
+            CMD_SET_OPERATOR_NAME,
+            data,
+            seq,
+            timeout_s,
+            "set operator name",
+            printer_id,
+            correlation_id=correlation_id,
+        )
+        log_info(
+            "DATECS_SET_OPERATOR_NAME",
+            {
+                "printer_id": printer_id,
+                "op_num": op_num,
+                "name": name,
+                "correlation_id": correlation_id,
+            },
+        )
+    except DatecsFiscalError as exc:
+        log_warning(
+            "DATECS_SET_OPERATOR_NAME_FAILED",
+            {
+                "printer_id": printer_id,
+                "op_num": op_num,
+                "name": name,
+                "error": str(exc),
+                "correlation_id": correlation_id,
+            },
         )
     return seq
 
@@ -810,19 +877,7 @@ def _open_receipt_with_fallback(
         correlation_id=correlation_id,
     )
 
-    if op_num:
-        seq = _diagnostic_operator_info(
-            transport,
-            adapter,
-            op_num,
-            seq,
-            timeout_s,
-            printer_id,
-            correlation_id=correlation_id,
-        )
-    
-    # Extract operator fields
-    operator = payload.get("operator") or printer.get("config", {}).get("operator") or {}
+    # Extract operator fields early (needed for diagnostics + set name)
     password = str(
         payload.get("operator_password") or operator.get("password") or ""
     ).strip()
@@ -833,6 +888,36 @@ def _open_receipt_with_fallback(
         or operator.get("till_number")
         or ""
     ).strip()
+
+    if op_num:
+        seq = _diagnostic_operator_info(
+            transport,
+            adapter,
+            op_num,
+            seq,
+            timeout_s,
+            printer_id,
+            correlation_id=correlation_id,
+        )
+
+    # Set operator name (waiter name) if provided — Datecs CMD 0x66
+    operator_name = (
+        payload.get("operator_name")
+        or operator.get("name")
+        or ""
+    )
+    if operator_name and op_num:
+        seq = _set_operator_name(
+            transport,
+            adapter,
+            op_num,
+            operator_name,
+            password,
+            seq,
+            timeout_s,
+            printer_id,
+            correlation_id=correlation_id,
+        )
     invoice = "I" if payload.get("invoice") else ""
     nsale = str(
         payload.get("nsale") or payload.get("n_sale")
