@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api import router as api_router
 from app.db import init_db
+from app.mqtt_client import mqtt_bridge
 from app.settings import STATIC_DIR
 from app.state import job_queue
 
@@ -17,7 +18,9 @@ from app.state import job_queue
 async def lifespan(_: FastAPI):
     init_db()
     job_queue.start()
+    mqtt_bridge.start()
     yield
+    await mqtt_bridge.stop()
     await job_queue.stop()
 
 

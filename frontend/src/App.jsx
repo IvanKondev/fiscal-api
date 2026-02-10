@@ -364,6 +364,11 @@ function App() {
   const [previewJob, setPreviewJob] = useState(null);
   const [detectingPorts, setDetectingPorts] = useState({});
   const [lanDetectState, setLanDetectState] = useState({ status: "idle", result: null });
+  const [mqttStatus, setMqttStatus] = useState({ enabled: false, connected: false });
+  const [mqttMessages, setMqttMessages] = useState([]);
+  const [mqttPublishTopic, setMqttPublishTopic] = useState("restaurant/1/bills/closed");
+  const [mqttPublishPayload, setMqttPublishPayload] = useState('{"bill_id": 1, "waiter_id": 1}');
+  const [mqttPublishing, setMqttPublishing] = useState(false);
 
   const statusClass = status.type ? `status ${status.type}` : "status";
   const fiscalTotal = useMemo(
@@ -406,6 +411,17 @@ function App() {
   const refreshLogs = async () => {
     const data = await apiRequest("/logs?limit=200");
     setLogs(data);
+  };
+
+  const refreshMqtt = async () => {
+    try {
+      const [st, msgs] = await Promise.all([
+        apiRequest("/mqtt/status"),
+        apiRequest("/mqtt/messages?limit=50"),
+      ]);
+      setMqttStatus(st);
+      setMqttMessages(msgs);
+    } catch { /* ignore */ }
   };
 
   const getPrinterOperator = (printerId) => {
@@ -947,12 +963,21 @@ function App() {
     refreshPrinters();
     refreshJobs();
     refreshLogs();
+    refreshMqtt();
     const interval = setInterval(() => {
       refreshJobs();
       refreshLogs();
     }, 3000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (activeTab === "MQTT") {
+      refreshMqtt();
+      const interval = setInterval(refreshMqtt, 2000);
+      return () => clearInterval(interval);
+    }
+  }, [activeTab]);
 
   const updateField = (field, value) => {
     setForm((current) => ({ ...current, [field]: value }));
@@ -1106,7 +1131,7 @@ function App() {
       </header>
 
       <nav className="tabs">
-        {["Printers", "Fiscal", "Storno", "Reports", "Jobs", "Logs"].map((tab) => (
+        {["Printers", "Fiscal", "Storno", "Reports", "Jobs", "Logs", "MQTT"].map((tab) => (
           <button
             key={tab}
             className={tab === activeTab ? "tab active" : "tab"}
@@ -2249,6 +2274,103 @@ function App() {
           </div>
         </section>
       )}
+      {activeTab === "MQTT" && (
+        <section className="card">
+          <div className="card-header">
+            <div>
+              <h2>📡 MQTT Bridge</h2>
+              <p className="muted">Връзка с EMQX брокер — входящи съобщения в реално време.</p>
+            </div>
+            <button onClick={refreshMqtt} disabled={loading}>
+              Refresh
+            </button>
+          </div>
+
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 16 }}>
+            <div style={{ flex: "1 1 200px", padding: 12, borderRadius: 8, background: mqttStatus.connected ? "var(--success-bg, #e6f9e6)" : "var(--error-bg, #fde8e8)", border: `1px solid ${mqttStatus.connected ? "#4caf50" : "#e53935"}` }}>
+              <strong style={{ fontSize: 18 }}>{mqttStatus.connected ? "🟢 Свързан" : mqttStatus.enabled ? "🔴 Прекъснат" : "⚪ Изключен"}</strong>
+              <p className="small muted" style={{ marginTop: 4 }}>
+                {mqttStatus.broker || "Не е конфигуриран"}
+              </p>
+            </div>
+            <div style={{ flex: "1 1 200px", padding: 12, borderRadius: 8, background: "var(--card-bg, #f5f5f5)", border: "1px solid var(--border, #ddd)" }}>
+              <p className="small muted">Client ID</p>
+              <strong>{mqttStatus.client_id || "—"}</strong>
+              <p className="small muted" style={{ marginTop: 4 }}>Transport: {mqttStatus.transport || "—"}</p>
+            </div>
+            <div style={{ flex: "1 1 200px", padding: 12, borderRadius: 8, background: "var(--card-bg, #f5f5f5)", border: "1px solid var(--border, #ddd)" }}>
+              <p className="small muted">Topic</p>
+              <strong>{mqttStatus.topic || "—"}</strong>
+              <p className="small muted" style={{ marginTop: 4 }}>Получени: {mqttStatus.message_count || 0}</p>
+            </div>
+          </div>
+
+          <h3>📤 Изпрати съобщение</h3>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16, alignItems: "flex-end" }}>
+            <label style={{ flex: "1 1 250px" }}>
+              Topic
+              <input
+                value={mqttPublishTopic}
+                onChange={(e) => setMqttPublishTopic(e.target.value)}
+                placeholder="restaurant/1/bills/closed"
+              />
+            </label>
+            <label style={{ flex: "2 1 300px" }}>
+              Payload (JSON)
+              <input
+                value={mqttPublishPayload}
+                onChange={(e) => setMqttPublishPayload(e.target.value)}
+                placeholder='{"bill_id": 1, "waiter_id": 1}'
+              />
+            </label>
+            <button
+              className="primary"
+              disabled={!mqttStatus.connected || mqttPublishing}
+              onClick={async () => {
+                setMqttPublishing(true);
+                try {
+                  let parsed;
+                  try { parsed = JSON.parse(mqttPublishPayload); } catch { parsed = mqttPublishPayload; }
+                  await apiRequest("/mqtt/publish", {
+                    method: "POST",
+                    body: JSON.stringify({ topic: mqttPublishTopic, payload: parsed, qos: 1 }),
+                  });
+                  setStatus({ type: "success", message: `Изпратено на ${mqttPublishTopic}` });
+                } catch (err) {
+                  setStatus({ type: "error", message: `Грешка: ${err.message}` });
+                } finally {
+                  setMqttPublishing(false);
+                }
+              }}
+              style={{ whiteSpace: "nowrap" }}
+            >
+              {mqttPublishing ? "Изпращане..." : "📤 Publish"}
+            </button>
+          </div>
+
+          <h3>📥 Входящи съобщения</h3>
+          <div className="logs" style={{ maxHeight: 500, overflowY: "auto" }}>
+            {mqttMessages.length === 0 && (
+              <p className="muted">Няма получени съобщения. Чакаме...</p>
+            )}
+            {mqttMessages.map((msg) => (
+              <div key={msg.id} className="log-item" style={{ borderLeft: "3px solid #4caf50" }}>
+                <span className="badge info" style={{ minWidth: 50 }}>#{msg.id}</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <strong>{msg.topic}</strong>
+                    <span className="small muted">{msg.time} · QoS {msg.qos}</span>
+                  </div>
+                  <pre className="log-context" style={{ marginTop: 4, maxHeight: 200, overflow: "auto" }}>
+                    {typeof msg.payload === "object" ? JSON.stringify(msg.payload, null, 2) : String(msg.payload)}
+                  </pre>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       {previewJob && (
         <ReceiptPreview
           job={previewJob}

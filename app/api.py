@@ -457,3 +457,27 @@ def sync_printer_datetime(printer_id: int, payload: Dict[str, Any] | None = Body
 @router.get("/tools/models")
 def supported_models() -> Dict[str, Any]:
     return {"models": list_supported_models()}
+
+
+@router.get("/mqtt/status")
+def mqtt_status() -> Dict[str, Any]:
+    from app.mqtt_client import mqtt_bridge
+    return mqtt_bridge.get_status()
+
+
+@router.get("/mqtt/messages")
+def mqtt_messages(limit: int = Query(default=50, le=50)) -> List[Dict[str, Any]]:
+    from app.mqtt_client import mqtt_bridge
+    return mqtt_bridge.get_messages(limit)
+
+
+@router.post("/mqtt/publish")
+async def mqtt_publish(body: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    from app.mqtt_client import mqtt_bridge
+    topic = body.get("topic", "").strip()
+    payload = body.get("payload", {})
+    qos = int(body.get("qos", 1))
+    if not topic:
+        raise HTTPException(status_code=400, detail="Topic is required")
+    ok = await mqtt_bridge.publish(topic, payload, qos=qos)
+    return {"ok": ok, "topic": topic}

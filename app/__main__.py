@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import sys
 import threading
 import time
 import webbrowser
@@ -7,6 +9,11 @@ import webbrowser
 import uvicorn
 
 from app.settings import APP_HOST, APP_PORT
+
+# paho-mqtt (used by aiomqtt) requires add_reader/add_writer which
+# only work on SelectorEventLoop. Windows defaults to ProactorEventLoop.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 _URL = f"http://127.0.0.1:{APP_PORT}"
 
