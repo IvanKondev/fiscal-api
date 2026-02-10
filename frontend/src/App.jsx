@@ -26,16 +26,17 @@ const taxOptions = [
   { value: "Г", label: "Г - 0%" },
 ];
 
-const createFiscalItem = () => ({
+const createFiscalItem = (overrides = {}) => ({
   name: "",
   tax: "Б",
   price: "",
   qty: "1",
   unit: "",
   discount: "",
+  ...overrides,
 });
 
-const createPayment = () => ({ type: "P", amount: "" });
+const createPayment = (overrides = {}) => ({ type: "P", amount: "", ...overrides });
 
 const toNumber = (value) => {
   const num = Number.parseFloat(String(value).replace(",", "."));
@@ -953,6 +954,34 @@ function App() {
   useEffect(() => {
     if (printers.length > 0) {
       checkAllPrinterStatuses();
+      const first = printers[0];
+      const op = first.config?.operator || {};
+      const opData = {
+        id: op.id?.toString() || "1",
+        password: op.password?.toString() || "0000",
+        till: op.till?.toString() || "1",
+        name: "UnrealSoft Waiter",
+      };
+      setFiscalSale((prev) => {
+        if (prev.printerId) return prev;
+        return {
+          printerId: String(first.id),
+          operator: opData,
+          items: [createFiscalItem({ name: "Ънриъл бургер", price: "1.29", qty: "1", tax: "Б" })],
+          payments: [
+            createPayment({ type: "P", amount: "1" }),
+            createPayment({ type: "N", amount: "0.29" }),
+          ],
+        };
+      });
+      setStornoForm((prev) => {
+        if (prev.printerId) return prev;
+        return { ...prev, printerId: String(first.id), operator: { id: opData.id, password: opData.password, till: opData.till } };
+      });
+      setReportForm((prev) => {
+        if (prev.printerId) return prev;
+        return { ...prev, printerId: String(first.id) };
+      });
     }
   }, [printers]);
 
@@ -1209,7 +1238,7 @@ function App() {
                       <p className="small" style={{ marginTop: "4px" }}>
                         {printer.transport === "lan"
                           ? `TCP порт: ${printer.tcp_port || 4999}`
-                          : `Baudrate: ${printer.baudrate}`} · Dry-run: {printer.dry_run ? "on" : "off"}
+                          : `Baudrate: ${printer.baudrate}`}
                       </p>
                     </div>
                     <div className="printer-time">
@@ -1314,17 +1343,28 @@ function App() {
                         ) : detected ? (
                           <button
                             className="primary"
-                            onClick={() => {
-                              setForm({
-                                ...defaultForm,
-                                name: `${detection.name} ${port.device}`,
-                                port: port.device,
-                                baudrate: String(detection.baudrate || "115200"),
-                                model: detection.model || "datecs_fp700mx",
-                                serial_number: detection.serial_number || "",
-                                firmware: detection.firmware || "",
-                              });
-                              setStatus({ type: "info", message: `Разпознат ${detection.name} на ${port.device} — форма попълнена` });
+                            onClick={async () => {
+                              try {
+                                await apiRequest("/printers", {
+                                  method: "POST",
+                                  body: JSON.stringify({
+                                    name: `${detection.name} ${port.device}`,
+                                    model: detection.model || "datecs_fp700mx",
+                                    transport: "serial",
+                                    port: port.device,
+                                    baudrate: detection.baudrate || 115200,
+                                    enabled: true,
+                                    serial_number: detection.serial_number || undefined,
+                                    firmware: detection.firmware || undefined,
+                                    fiscal_memory_number: detection.fiscal_memory_number || undefined,
+                                    config: { operator: { id: "1", password: "0000", till: "1" } },
+                                  }),
+                                });
+                                setStatus({ type: "success", message: `✅ ${detection.name} добавен автоматично` });
+                                await refreshPrinters();
+                              } catch (error) {
+                                setStatus({ type: "error", message: error.message });
+                              }
                             }}
                           >
                             ➕ Добави
@@ -1348,195 +1388,6 @@ function App() {
                 </div>
               </div>
             )}
-          </div>
-
-          <div className="card form-card">
-            <div className="card-header">
-              <h2>{editingId ? "✏️ Редакция" : "➕ Нов принтер"}</h2>
-            </div>
-            <form onSubmit={submitForm} className="form">
-              <label>
-                Име на принтера
-                <input
-                  value={form.name}
-                  onChange={(event) => updateField("name", event.target.value)}
-                  placeholder="Datecs COM4 - Каса 1"
-                  required
-                />
-              </label>
-              <div className="row">
-                <label>
-                  Връзка
-                  <select
-                    value={form.transport}
-                    onChange={(event) => updateField("transport", event.target.value)}
-                  >
-                    <option value="serial">🔌 Сериен (COM)</option>
-                    <option value="lan">🌐 LAN (TCP/IP)</option>
-                  </select>
-                </label>
-              </div>
-              {form.transport === "serial" ? (
-                <div className="row">
-                  <label>
-                    COM порт *
-                    <select
-                      value={form.port}
-                      onChange={(event) => updateField("port", event.target.value)}
-                      required
-                    >
-                      <option value="">Избери порт...</option>
-                      {availablePorts.map((port) => (
-                        <option key={port.device} value={port.device}>
-                          {port.device} - {port.description || "Неизвестен"}
-                        </option>
-                      ))}
-                      <option disabled>──────────</option>
-                      <option value="COM3">COM3 (ръчно)</option>
-                      <option value="COM4">COM4 (ръчно)</option>
-                      <option value="COM5">COM5 (ръчно)</option>
-                    </select>
-                  </label>
-                  <label>
-                    Baudrate
-                    <select
-                      value={form.baudrate}
-                      onChange={(event) => updateField("baudrate", event.target.value)}
-                    >
-                      <option value="115200">115200 (препоръчано)</option>
-                      <option value="57600">57600</option>
-                      <option value="38400">38400</option>
-                      <option value="19200">19200</option>
-                      <option value="9600">9600</option>
-                    </select>
-                  </label>
-                </div>
-              ) : (
-                <>
-                  <div className="row">
-                    <label>
-                      IP адрес *
-                      <input
-                        value={form.ip_address}
-                        onChange={(event) => updateField("ip_address", event.target.value)}
-                        placeholder="192.168.1.100"
-                        required
-                      />
-                    </label>
-                    <label>
-                      TCP порт
-                      <input
-                        value={form.tcp_port}
-                        onChange={(event) => updateField("tcp_port", event.target.value)}
-                        placeholder="4999"
-                      />
-                    </label>
-                    <label style={{ display: "flex", alignItems: "flex-end" }}>
-                      <button
-                        type="button"
-                        className="secondary"
-                        onClick={detectPrinterOnLan}
-                        disabled={lanDetectState.status === "detecting"}
-                        style={{ whiteSpace: "nowrap" }}
-                      >
-                        {lanDetectState.status === "detecting" ? "🔍..." : "🔍 Разпознай"}
-                      </button>
-                    </label>
-                  </div>
-                  {lanDetectState.status === "found" && lanDetectState.result && (
-                    <p className="small" style={{ color: "var(--success)", marginTop: 4 }}>
-                      ✓ {lanDetectState.result.name} — {lanDetectState.result.firmware || ""} (S/N: {lanDetectState.result.serial_number || "?"})
-                    </p>
-                  )}
-                  {lanDetectState.status === "not_found" && (
-                    <p className="small" style={{ color: "var(--warning)", marginTop: 4 }}>
-                      Не е открит принтер на този адрес.
-                    </p>
-                  )}
-                </>
-              )}
-              <div className="row">
-                <label>
-                  Модел
-                  <select
-                    value={form.model}
-                    onChange={(event) => updateField("model", event.target.value)}
-                  >
-                    <optgroup label="FP-700 Series (Protocol 2.08)">
-                      <option value="datecs_fp700mx">Datecs FP-700MX</option>
-                      <option value="datecs_fp700x">Datecs FP-700X</option>
-                      <option value="datecs_fp700xe">Datecs FP-700XE</option>
-                      <option value="datecs_fmp350x">Datecs FMP-350X</option>
-                      <option value="datecs_fmp55x">Datecs FMP-55X</option>
-                      <option value="datecs_wp500x">Datecs WP-500X</option>
-                      <option value="datecs_wp50x">Datecs WP-50X</option>
-                      <option value="datecs_wp25x">Datecs WP-25X</option>
-                      <option value="datecs_dp25x">Datecs DP-25X</option>
-                      <option value="datecs_dp150x">Datecs DP-150X</option>
-                      <option value="datecs_dp05c">Datecs DP-05C</option>
-                    </optgroup>
-                    <optgroup label="FP-2000 Series (Protocol 2.00BG)">
-                      <option value="datecs_fp2000">Datecs FP-2000</option>
-                      <option value="datecs_fp800">Datecs FP-800</option>
-                      <option value="datecs_fp650">Datecs FP-650</option>
-                      <option value="datecs_sk1_21f">Datecs SK1-21F</option>
-                      <option value="datecs_sk1_31f">Datecs SK1-31F</option>
-                      <option value="datecs_fmp10">Datecs FMP-10</option>
-                      <option value="datecs_fp700">Datecs FP-700 (v2.00BG)</option>
-                    </optgroup>
-                  </select>
-                </label>
-              </div>
-              <div className="form-section">
-                <h3>👤 Оператор по подразбиране</h3>
-                <div className="row">
-                  <label>
-                    ID
-                    <input
-                      value={form.operator_id}
-                      onChange={(event) => updateField("operator_id", event.target.value)}
-                      placeholder="2"
-                    />
-                  </label>
-                  <label>
-                    Парола
-                    <input
-                      value={form.operator_password}
-                      onChange={(event) => updateField("operator_password", event.target.value)}
-                      placeholder="0000"
-                    />
-                  </label>
-                  <label>
-                    Каса
-                    <input
-                      value={form.operator_till}
-                      onChange={(event) => updateField("operator_till", event.target.value)}
-                      placeholder="2"
-                    />
-                  </label>
-                </div>
-              </div>
-              <div className="toggle-row">
-                <label className="toggle">
-                  <input
-                    type="checkbox"
-                    checked={form.enabled}
-                    onChange={(event) => updateField("enabled", event.target.checked)}
-                  />
-                  ✅ Активен
-                </label>
-              </div>
-              <div className="actions">
-                <button className="primary" type="submit" disabled={loading}>
-                  {editingId ? "💾 Запази" : "➕ Добави"}
-                </button>
-                {editingId && (
-                  <button type="button" onClick={resetForm} disabled={loading}>
-                    ❌ Откажи
-                  </button>
-                )}
-              </div>
-            </form>
           </div>
 
         </section>
@@ -1800,229 +1651,129 @@ function App() {
           <div className="card form-card fiscal-section fiscal-main">
             <div className="card-header">
               <div>
-                <h2>Сторно бележка</h2>
-                <p className="muted">Корекция/анулиране на фискален бон.</p>
+                <h2>Сторно на цяла бележка</h2>
+                <p className="muted">Избери успешен фискален бон от списъка или въведи номер на документ ръчно.</p>
               </div>
             </div>
             <form onSubmit={submitStorno} className="form">
-              <label>
-                Принтер
-                <select
-                  value={stornoForm.printerId}
-                  onChange={(e) => {
-                    const printerId = e.target.value;
-                    const operatorDefaults = buildPrinterOperator(printerId);
-                    setStornoForm((current) => ({
-                      ...current,
-                      printerId,
-                      operator: operatorDefaults || current.operator,
-                    }));
-                  }}
-                >
-                  <option value="">Избери принтер</option>
-                  {printers.map((printer) => (
-                    <option key={printer.id} value={printer.id}>
-                      {printer.name} ({printer.port || "-"})
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="row">
+              <div className="form-section">
+                <h3>📄 Избери бележка за сторниране</h3>
                 <label>
-                  Оператор ID
-                  <input
-                    value={stornoForm.operator.id}
-                    onChange={(e) => setStornoForm({...stornoForm, operator: {...stornoForm.operator, id: e.target.value}})}
-                    placeholder="1"
-                  />
-                </label>
-                <label>
-                  Парола
-                  <input
-                    value={stornoForm.operator.password}
-                    onChange={(e) => setStornoForm({...stornoForm, operator: {...stornoForm.operator, password: e.target.value}})}
-                    placeholder="0000"
-                  />
-                </label>
-                <label>
-                  Каса
-                  <input
-                    value={stornoForm.operator.till}
-                    onChange={(e) => setStornoForm({...stornoForm, operator: {...stornoForm.operator, till: e.target.value}})}
-                    placeholder="1"
-                  />
+                  Последни фискални бонове
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      const job = jobs.find((j) => j.id === Number(e.target.value));
+                      if (!job) return;
+                      const p = job.payload || {};
+                      const created = new Date(job.created_at);
+                      const dd = String(created.getDate()).padStart(2, "0");
+                      const mm = String(created.getMonth() + 1).padStart(2, "0");
+                      const yy = String(created.getFullYear()).slice(-2);
+                      const items = (p.items || []).map((it) => ({
+                        name: it.name || "",
+                        tax: it.vat_group || it.tax || "Б",
+                        price: String(it.price || ""),
+                        qty: String(it.quantity || it.qty || "1"),
+                        unit: it.unit || "",
+                        discount: it.discount || "",
+                      }));
+                      const payments = (p.payments || []).map((pm) => ({
+                        type: pm.type || "P",
+                        amount: String(pm.amount || ""),
+                      }));
+                      setStornoForm((prev) => ({
+                        ...prev,
+                        printerId: String(job.printer_id),
+                        original: {
+                          doc_no: job.result?.receipt_number || "",
+                          date: `${dd}${mm}${yy}`,
+                          fm: "",
+                          unp: p.nsale || "",
+                        },
+                        items: items.length ? items : [createFiscalItem()],
+                        payments: payments.length ? payments : [createPayment()],
+                      }));
+                      setStatus({ type: "info", message: `Заредена бележка #${job.result?.receipt_number || job.id} за сторно` });
+                    }}
+                  >
+                    <option value="">— Избери от последните бонове —</option>
+                    {jobs
+                      .filter((j) => j.payload_type === "fiscal_receipt" && j.status === "success" && j.result?.receipt_number)
+                      .slice(0, 20)
+                      .map((j) => (
+                        <option key={j.id} value={j.id}>
+                          Бон №{j.result.receipt_number} — {new Date(j.created_at).toLocaleString("bg-BG", { dateStyle: "short", timeStyle: "short" })} — {(j.payload?.items || []).map(i => i.name).join(", ").substring(0, 40)}
+                        </option>
+                      ))}
+                  </select>
                 </label>
               </div>
               <div className="form-section">
-                <div className="card-header">
-                  <h3>Оригинален документ</h3>
-                </div>
-                <label>
-                  Тип сторно
-                  <select
-                    value={stornoForm.stornoType}
-                    onChange={(e) => setStornoForm({...stornoForm, stornoType: e.target.value})}
-                  >
-                    <option value="0">0 - Оператор грешка</option>
-                    <option value="1">1 - Връщане/рекламация</option>
-                    <option value="2">2 - Данъчна редукция</option>
-                  </select>
-                </label>
+                <h3>📋 Данни за сторно</h3>
                 <div className="row">
                   <label>
-                    Номер на документ
+                    Тип сторно
+                    <select
+                      value={stornoForm.stornoType}
+                      onChange={(e) => setStornoForm({...stornoForm, stornoType: e.target.value})}
+                    >
+                      <option value="0">0 - Оператор грешка</option>
+                      <option value="1">1 - Връщане/рекламация</option>
+                      <option value="2">2 - Данъчна редукция</option>
+                    </select>
+                  </label>
+                  <label>
+                    Номер на документ *
                     <input
                       value={stornoForm.original.doc_no}
                       onChange={(e) => setStornoForm({...stornoForm, original: {...stornoForm.original, doc_no: e.target.value}})}
                       placeholder="0001234"
+                      required
                     />
                   </label>
                   <label>
-                    Дата (DDMMYY)
+                    Дата (DDMMYY) *
                     <input
                       value={stornoForm.original.date}
                       onChange={(e) => setStornoForm({...stornoForm, original: {...stornoForm.original, date: e.target.value}})}
-                      placeholder="030226"
-                    />
-                  </label>
-                </div>
-                <div className="row">
-                  <label>
-                    FM номер (опция)
-                    <input
-                      value={stornoForm.original.fm}
-                      onChange={(e) => setStornoForm({...stornoForm, original: {...stornoForm.original, fm: e.target.value}})}
-                      placeholder=""
-                    />
-                  </label>
-                  <label>
-                    УНП (опция)
-                    <input
-                      value={stornoForm.original.unp}
-                      onChange={(e) => setStornoForm({...stornoForm, original: {...stornoForm.original, unp: e.target.value}})}
-                      placeholder=""
+                      placeholder="100226"
+                      required
                     />
                   </label>
                 </div>
               </div>
-              <div className="items">
-                <div className="card-header">
-                  <h3>Артикули</h3>
-                  <button type="button" onClick={() => setStornoForm({...stornoForm, items: [...stornoForm.items, createFiscalItem()]})}>
-                    + Добави
-                  </button>
-                </div>
-                {stornoForm.items.map((item, index) => (
-                  <div key={`storno-item-${index}`} className="items-row">
-                    <input
-                      placeholder="Артикул"
-                      value={item.name}
-                      onChange={(e) => {
-                        const updated = [...stornoForm.items];
-                        updated[index] = {...item, name: e.target.value};
-                        setStornoForm({...stornoForm, items: updated});
-                      }}
-                    />
-                    <select
-                      value={item.tax}
-                      onChange={(e) => {
-                        const updated = [...stornoForm.items];
-                        updated[index] = {...item, tax: e.target.value};
-                        setStornoForm({...stornoForm, items: updated});
-                      }}
-                    >
-                      {taxOptions.map((opt) => (
-                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                      ))}
-                    </select>
-                    <input
-                      placeholder="Цена"
-                      type="number"
-                      step="0.01"
-                      value={item.price}
-                      onChange={(e) => {
-                        const updated = [...stornoForm.items];
-                        updated[index] = {...item, price: e.target.value};
-                        setStornoForm({...stornoForm, items: updated});
-                      }}
-                    />
-                    <input
-                      placeholder="Кол."
-                      type="number"
-                      step="0.001"
-                      value={item.qty}
-                      onChange={(e) => {
-                        const updated = [...stornoForm.items];
-                        updated[index] = {...item, qty: e.target.value};
-                        setStornoForm({...stornoForm, items: updated});
-                      }}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const updated = stornoForm.items.filter((_, i) => i !== index);
-                        setStornoForm({...stornoForm, items: updated.length ? updated : [createFiscalItem()]});
-                      }}
-                    >
-                      ✕
-                    </button>
+              {stornoForm.items.length > 0 && stornoForm.items[0].name && (
+                <div className="form-section">
+                  <h3>🛒 Артикули ({stornoForm.items.length})</h3>
+                  <div style={{ background: "var(--bg)", borderRadius: 8, padding: 12 }}>
+                    {stornoForm.items.map((item, i) => (
+                      <div key={i} className="small" style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: i < stornoForm.items.length - 1 ? "1px solid var(--border)" : "none" }}>
+                        <span>{item.name}</span>
+                        <span>{item.qty} x {item.price} лв ({taxLabel(item.tax)})</span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-              <div className="items">
-                <div className="card-header">
-                  <h3>Плащания</h3>
-                  <button type="button" onClick={() => setStornoForm({...stornoForm, payments: [...stornoForm.payments, createPayment()]})}>
-                    + Добави
-                  </button>
                 </div>
-                {stornoForm.payments.map((payment, index) => (
-                  <div key={`storno-payment-${index}`} className="items-row">
-                    <select
-                      value={payment.type}
-                      onChange={(e) => {
-                        const updated = [...stornoForm.payments];
-                        updated[index] = {...payment, type: e.target.value};
-                        setStornoForm({...stornoForm, payments: updated});
-                      }}
-                    >
-                      <option value="P">В брой (P)</option>
-                      <option value="C">С карта (C)</option>
-                      <option value="D">Ваучер (D)</option>
-                      <option value="I">Банка (I)</option>
-                    </select>
-                    <input
-                      placeholder="Сума"
-                      type="number"
-                      step="0.01"
-                      value={payment.amount}
-                      onChange={(e) => {
-                        const updated = [...stornoForm.payments];
-                        updated[index] = {...payment, amount: e.target.value};
-                        setStornoForm({...stornoForm, payments: updated});
-                      }}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const updated = stornoForm.payments.filter((_, i) => i !== index);
-                        setStornoForm({...stornoForm, payments: updated.length ? updated : [createPayment()]});
-                      }}
-                    >
-                      ✕
-                    </button>
+              )}
+              {stornoForm.payments.length > 0 && stornoForm.payments[0].amount && (
+                <div className="form-section">
+                  <h3>💳 Плащания</h3>
+                  <div style={{ background: "var(--bg)", borderRadius: 8, padding: 12 }}>
+                    {stornoForm.payments.map((pm, i) => (
+                      <div key={i} className="small" style={{ display: "flex", justifyContent: "space-between", padding: "4px 0" }}>
+                        <span>{paymentLabel(pm.type)}</span>
+                        <span>{pm.amount} лв</span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                </div>
+              )}
               <div className="summary">
-                <p><strong>Тотал:</strong> {stornoTotal.toFixed(2)} EUR</p>
-                <p><strong>Платено:</strong> {stornoPaymentTotal.toFixed(2)} EUR</p>
-                {stornoRemaining > 0 && (
-                  <p className="warning"><strong>Остава:</strong> {stornoRemaining.toFixed(2)} EUR</p>
-                )}
+                <p><strong>Тотал за сторно:</strong> {stornoTotal.toFixed(2)} лв</p>
               </div>
-              <button className="primary" type="submit" disabled={stornoLoading}>
-                {stornoLoading ? "Изпращам..." : "Печат на сторно бележка"}
+              <button className="primary" type="submit" disabled={stornoLoading || !stornoForm.original.doc_no}>
+                {stornoLoading ? "Изпращам..." : "🔄 Сторнирай цялата бележка"}
               </button>
             </form>
           </div>
