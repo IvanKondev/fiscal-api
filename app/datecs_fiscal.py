@@ -807,9 +807,27 @@ def _set_operator_name(
     correlation_id: str | None = None,
 ) -> int:
     """Program operator name on printer (Datecs CMD 0x66).
-    Data format: <OpNum>,<Name>,<Password>
+
+    FP-700MX (hex4): {OpNum}<TAB>{Name}<TAB>{Password}<TAB>
+    FP-2000  (byte): {OpNum},{Name},{Password}
     """
-    data = f"{op_num},{name},{password}"
+    proto = getattr(adapter, "protocol_format", "hex4")
+    if proto == "byte":
+        data = f"{op_num},{name},{password}"
+    else:
+        data = f"{op_num}\t{name}\t{password}\t"
+    log_info(
+        "DATECS_SET_OPERATOR_NAME_ATTEMPT",
+        {
+            "printer_id": printer_id,
+            "op_num": op_num,
+            "name": name,
+            "password": password,
+            "protocol": proto,
+            "data_repr": repr(data),
+            "correlation_id": correlation_id,
+        },
+    )
     try:
         seq = _send(
             transport,
@@ -828,6 +846,7 @@ def _set_operator_name(
                 "printer_id": printer_id,
                 "op_num": op_num,
                 "name": name,
+                "protocol": proto,
                 "correlation_id": correlation_id,
             },
         )
@@ -838,6 +857,7 @@ def _set_operator_name(
                 "printer_id": printer_id,
                 "op_num": op_num,
                 "name": name,
+                "protocol": proto,
                 "error": str(exc),
                 "correlation_id": correlation_id,
             },

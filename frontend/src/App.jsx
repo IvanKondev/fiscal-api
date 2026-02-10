@@ -1147,6 +1147,99 @@ function App() {
 
       {activeTab === "Printers" && (
         <section className="printers-section">
+
+          {printers.length > 0 && (
+          <div className="card">
+            <div className="card-header">
+              <div>
+                <h2>🖨️ Свързани принтери</h2>
+                <p className="muted">{printers.length} {printers.length === 1 ? "принтер" : "принтера"} в системата</p>
+              </div>
+              <button onClick={refreshPrinters} disabled={loading}>
+                Refresh
+              </button>
+            </div>
+            <div className="printer-list">
+              {printers.map((printer) => {
+                const timeInfo = printerTimes[printer.id] || {};
+                const timeLoading = Boolean(timeInfo.loading);
+                const printerTimeLabel = timeLoading ? "Чета..." : timeInfo.printer_time || "—";
+                const hostTimeLabel = timeInfo.host_time || "—";
+                const deltaLabel = formatDeltaSeconds(timeInfo.delta_seconds);
+                const statusInfo = printerStatuses[printer.id];
+                const statusIcon = statusInfo?.status === "ok" ? "🟢" : statusInfo?.status === "warning" ? "🟡" : statusInfo?.status === "error" ? "🔴" : "⚪";
+
+                return (
+                  <div key={printer.id} className="printer-card">
+                    <div className="printer-details">
+                      <h3>{statusIcon} {printer.name}</h3>
+                      <p className="muted">
+                        {printer.model} · {printer.transport === "lan"
+                          ? `🌐 ${printer.ip_address || "?"}:${printer.tcp_port || 4999}`
+                          : `🔌 ${printer.port || "-"}`}
+                      </p>
+                      <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", marginTop: "4px" }}>
+                        {printer.serial_number && (
+                          <span className="small" style={{ background: "var(--bg)", padding: "2px 8px", borderRadius: "6px", border: "1px solid var(--border)" }}>
+                            <strong>S/N:</strong> {printer.serial_number}
+                          </span>
+                        )}
+                        {printer.firmware && (
+                          <span className="small" style={{ background: "var(--bg)", padding: "2px 8px", borderRadius: "6px", border: "1px solid var(--border)" }}>
+                            <strong>FW:</strong> {printer.firmware}
+                          </span>
+                        )}
+                        {printer.fiscal_memory_number && (
+                          <span className="small" style={{ background: "var(--bg)", padding: "2px 8px", borderRadius: "6px", border: "1px solid var(--border)" }}>
+                            <strong>ФП:</strong> {printer.fiscal_memory_number}
+                          </span>
+                        )}
+                      </div>
+                      <p className="small" style={{ marginTop: "4px" }}>
+                        {printer.transport === "lan"
+                          ? `TCP порт: ${printer.tcp_port || 4999}`
+                          : `Baudrate: ${printer.baudrate}`} · Dry-run: {printer.dry_run ? "on" : "off"}
+                      </p>
+                    </div>
+                    <div className="printer-time">
+                      <div>
+                        <p className="muted small">Час на принтера</p>
+                        <strong>{printerTimeLabel}</strong>
+                        <p className="small muted">PC: {hostTimeLabel}</p>
+                        <p className="small">Δ {deltaLabel}</p>
+                        {timeInfo.error && (
+                          <p className="small error-text">⚠️ {timeInfo.error}</p>
+                        )}
+                      </div>
+                      <div className="printer-time-actions">
+                        <button onClick={() => readPrinterTime(printer.id)} disabled={timeLoading}>
+                          ⏱ Прочети
+                        </button>
+                        <button
+                          className="primary"
+                          onClick={() => syncPrinterTime(printer.id)}
+                          disabled={timeLoading}
+                        >
+                          🔄 Свери
+                        </button>
+                      </div>
+                    </div>
+                    <div className="printer-actions">
+                      <button onClick={() => handleEdit(printer)}>Edit</button>
+                      <button
+                        className="danger"
+                        onClick={() => handleDelete(printer.id)}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          )}
+
           <div className="card">
             <div className="card-header">
               <div>
@@ -1432,88 +1525,6 @@ function App() {
             </form>
           </div>
 
-          <div className="card">
-            <div className="card-header">
-              <div>
-                <h2>Налични принтери</h2>
-                <p className="muted">Последно обновяване в реално време.</p>
-              </div>
-              <button onClick={refreshPrinters} disabled={loading}>
-                Refresh
-              </button>
-            </div>
-            <div className="printer-list">
-              {printers.length === 0 && (
-                <p className="muted">Няма конфигурирани принтери.</p>
-              )}
-              {printers.map((printer) => {
-                const timeInfo = printerTimes[printer.id] || {};
-                const timeLoading = Boolean(timeInfo.loading);
-                const printerTimeLabel = timeLoading ? "Чета..." : timeInfo.printer_time || "—";
-                const hostTimeLabel = timeInfo.host_time || "—";
-                const deltaLabel = formatDeltaSeconds(timeInfo.delta_seconds);
-
-                return (
-                  <div key={printer.id} className="printer-card">
-                    <div className="printer-details">
-                      <h3>{printer.name}</h3>
-                      <p className="muted">
-                        {printer.model} · {printer.transport === "lan"
-                          ? `🌐 ${printer.ip_address || "?"}:${printer.tcp_port || 4999}`
-                          : `🔌 ${printer.port || "-"}`}
-                      </p>
-                      <p className="small">
-                        {printer.transport === "lan"
-                          ? `TCP порт: ${printer.tcp_port || 4999}`
-                          : `Baudrate: ${printer.baudrate}`} · Dry-run: {printer.dry_run ? "on" : "off"}
-                      </p>
-                      {(printer.serial_number || printer.firmware || printer.fiscal_memory_number) && (
-                        <p className="muted small">
-                          {printer.serial_number && `S/N: ${printer.serial_number}`}
-                          {printer.serial_number && printer.firmware && " · "}
-                          {printer.firmware && `FW: ${printer.firmware}`}
-                          {(printer.serial_number || printer.firmware) && printer.fiscal_memory_number && " · "}
-                          {printer.fiscal_memory_number && `ФП: ${printer.fiscal_memory_number}`}
-                        </p>
-                      )}
-                    </div>
-                    <div className="printer-time">
-                      <div>
-                        <p className="muted small">Час на принтера</p>
-                        <strong>{printerTimeLabel}</strong>
-                        <p className="small muted">PC: {hostTimeLabel}</p>
-                        <p className="small">Δ {deltaLabel}</p>
-                        {timeInfo.error && (
-                          <p className="small error-text">⚠️ {timeInfo.error}</p>
-                        )}
-                      </div>
-                      <div className="printer-time-actions">
-                        <button onClick={() => readPrinterTime(printer.id)} disabled={timeLoading}>
-                          ⏱ Прочети
-                        </button>
-                        <button
-                          className="primary"
-                          onClick={() => syncPrinterTime(printer.id)}
-                          disabled={timeLoading}
-                        >
-                          🔄 Свери
-                        </button>
-                      </div>
-                    </div>
-                    <div className="printer-actions">
-                      <button onClick={() => handleEdit(printer)}>Edit</button>
-                      <button
-                        className="danger"
-                        onClick={() => handleDelete(printer.id)}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
         </section>
       )}
 
