@@ -808,14 +808,14 @@ def _set_operator_name(
 ) -> int:
     """Program operator name on printer (Datecs CMD 0x66).
 
-    FP-700MX (hex4): {OpNum}<TAB>{Name}<TAB>{Password}<TAB>
-    FP-2000  (byte): {OpNum},{Name},{Password}
+    FP-2000  (byte): <OpCode>,<Pwd>,<OpName>
+    FP-700MX (hex4): <OpCode><SEP><Pwd><SEP><OpName><SEP>
     """
     proto = getattr(adapter, "protocol_format", "hex4")
     if proto == "byte":
-        data = f"{op_num},{name},{password}"
+        data = f"{op_num},{password},{name}"
     else:
-        data = f"{op_num}\t{name}\t{password}\t"
+        data = f"{op_num}\t{password}\t{name}\t"
     log_info(
         "DATECS_SET_OPERATOR_NAME_ATTEMPT",
         {

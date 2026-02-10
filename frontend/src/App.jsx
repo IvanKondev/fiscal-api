@@ -1047,6 +1047,17 @@ function App() {
     }
   };
 
+  const refreshPrinterInfo = async (printerId) => {
+    setStatus({ type: "info", message: "Обновяване на информация за принтера..." });
+    try {
+      await apiRequest(`/printers/${printerId}/refresh-info`, { method: "POST" });
+      await refreshPrinters();
+      setStatus({ type: "success", message: "Информацията за принтера е обновена." });
+    } catch (error) {
+      setStatus({ type: "error", message: `Грешка: ${error.message}` });
+    }
+  };
+
   const handleEdit = (printer) => {
     const operatorDefaults = printer.config?.operator || {};
     setEditingId(printer.id);
@@ -1225,6 +1236,9 @@ function App() {
                       </div>
                     </div>
                     <div className="printer-actions">
+                      <button onClick={() => refreshPrinterInfo(printer.id)} disabled={loading}>
+                        🔄 Обнови инфо
+                      </button>
                       <button onClick={() => handleEdit(printer)}>Edit</button>
                       <button
                         className="danger"

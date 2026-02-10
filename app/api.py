@@ -109,6 +109,44 @@ def printer_delete(printer_id: int) -> Dict[str, str]:
     return {"status": "deleted"}
 
 
+@router.post("/printers/{printer_id}/refresh-info")
+async def printer_refresh_info(printer_id: int) -> Dict[str, Any]:
+    """Re-detect printer and update SN, firmware, fiscal_memory_number in DB."""
+    printer = get_printer(printer_id)
+    if not printer:
+        raise HTTPException(status_code=404, detail="Printer not found")
+    transport_type = (printer.get("transport") or "serial").lower()
+    try:
+        if transport_type == "lan":
+            result = await asyncio.to_thread(
+                detect_printer_on_lan,
+                printer.get("ip_address", ""),
+                printer.get("tcp_port", 4999),
+            )
+        else:
+            result = await asyncio.to_thread(
+                detect_printer_on_port,
+                printer.get("port", ""),
+                printer.get("baudrate"),
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    if not result.get("detected"):
+        raise HTTPException(status_code=404, detail=result.get("error", "Printer not detected"))
+    update_data = {}
+    if result.get("serial_number"):
+        update_data["serial_number"] = result["serial_number"]
+    if result.get("firmware"):
+        update_data["firmware"] = result["firmware"]
+    if result.get("fiscal_memory_number"):
+        update_data["fiscal_memory_number"] = result["fiscal_memory_number"]
+    if update_data:
+        updated = update_printer(printer_id, update_data)
+        log_info("PRINTER_INFO_REFRESHED", {"printer_id": printer_id, **update_data})
+        return updated
+    return get_printer(printer_id)
+
+
 @router.post("/printers/{printer_id}/test-print")
 async def printer_test_print(printer_id: int) -> Dict[str, str]:
     printer = get_printer(printer_id)
