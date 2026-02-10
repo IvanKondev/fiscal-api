@@ -807,9 +807,9 @@ def _set_operator_name(
     correlation_id: str | None = None,
 ) -> int:
     """Program operator name on printer (Datecs CMD 0x66).
-    Data format: <OpNum>\t<Name>\t<Password>\t
+    Data format: <OpNum>,<Name>,<Password>
     """
-    data = f"{op_num}\t{name}\t{password}\t"
+    data = f"{op_num},{name},{password}"
     try:
         seq = _send(
             transport,

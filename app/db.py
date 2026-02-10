@@ -40,6 +40,9 @@ def init_db() -> None:
                 enabled INTEGER DEFAULT 1,
                 dry_run INTEGER DEFAULT 0,
                 config_json TEXT DEFAULT '{}',
+                serial_number TEXT,
+                firmware TEXT,
+                fiscal_memory_number TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -54,6 +57,12 @@ def init_db() -> None:
             conn.execute("ALTER TABLE printers ADD COLUMN tcp_port INTEGER DEFAULT 4999")
         except sqlite3.OperationalError:
             pass
+        # Migration: add device info columns
+        for col in ["serial_number TEXT", "firmware TEXT", "fiscal_memory_number TEXT"]:
+            try:
+                conn.execute(f"ALTER TABLE printers ADD COLUMN {col}")
+            except sqlite3.OperationalError:
+                pass
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS jobs (
@@ -134,8 +143,10 @@ def create_printer(data: Dict[str, Any]) -> Dict[str, Any]:
             """
             INSERT INTO printers
             (name, model, transport, port, baudrate, data_bits, parity, stop_bits, timeout_ms,
-             ip_address, tcp_port, enabled, dry_run, config_json, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ip_address, tcp_port, enabled, dry_run, config_json,
+             serial_number, firmware, fiscal_memory_number,
+             created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 data["name"],
@@ -152,6 +163,9 @@ def create_printer(data: Dict[str, Any]) -> Dict[str, Any]:
                 1 if data.get("enabled", True) else 0,
                 1 if data.get("dry_run", False) else 0,
                 config_json,
+                data.get("serial_number"),
+                data.get("firmware"),
+                data.get("fiscal_memory_number"),
                 now,
                 now,
             ),
@@ -181,6 +195,9 @@ def update_printer(printer_id: int, data: Dict[str, Any]) -> Optional[Dict[str, 
         "enabled": "enabled",
         "dry_run": "dry_run",
         "config": "config_json",
+        "serial_number": "serial_number",
+        "firmware": "firmware",
+        "fiscal_memory_number": "fiscal_memory_number",
     }
     for key, column in mapping.items():
         if key not in data:

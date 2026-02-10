@@ -115,6 +115,7 @@ def _try_detect_transport(
         name = ""
         firmware = ""
         serial_number = ""
+        fiscal_memory_number = ""
 
         raw = response.fields[0] if response.fields else ""
         parts = raw.split(",")
@@ -124,6 +125,8 @@ def _try_detect_transport(
             firmware = parts[1].strip()
         if len(parts) >= 5:
             serial_number = parts[4].strip()
+        if len(parts) >= 6:
+            fiscal_memory_number = parts[5].strip()
 
         if not name:
             return None
@@ -135,6 +138,7 @@ def _try_detect_transport(
             "model": model,
             "firmware": firmware,
             "serial_number": serial_number,
+            "fiscal_memory_number": fiscal_memory_number,
             "protocol": protocol_format,
         }
     except DatecsProtocolError as exc:

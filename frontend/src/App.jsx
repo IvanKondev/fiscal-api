@@ -15,6 +15,8 @@ const defaultForm = {
   operator_till: "2",
   enabled: true,
   dry_run: false,
+  serial_number: "",
+  firmware: "",
 };
 
 const taxOptions = [
@@ -868,6 +870,8 @@ function App() {
           ...prev,
           name: prev.name || `${result.name} LAN`,
           model: result.model || prev.model,
+          serial_number: result.serial_number || prev.serial_number || "",
+          firmware: result.firmware || prev.firmware || "",
         }));
         setStatus({ type: "success", message: `Разпознат ${result.name} на ${ip}:${port}` });
       } else {
@@ -947,13 +951,6 @@ function App() {
   };
 
   useEffect(() => {
-    refreshPrinters();
-    refreshJobs();
-    refreshLogs();
-    detectSerialPorts();
-  }, []);
-
-  useEffect(() => {
     if (printers.length > 0) {
       checkAllPrinterStatuses();
     }
@@ -1011,6 +1008,8 @@ function App() {
         payload.ip_address = form.ip_address.trim() || null;
         payload.tcp_port = Number(form.tcp_port) || 4999;
       }
+      if (form.serial_number?.trim()) payload.serial_number = form.serial_number.trim();
+      if (form.firmware?.trim()) payload.firmware = form.firmware.trim();
       const operatorDefaults = {
         id: form.operator_id?.trim() || "",
         password: form.operator_password?.trim() || "",
@@ -1064,6 +1063,8 @@ function App() {
       operator_id: operatorDefaults.id?.toString() || "",
       operator_password: operatorDefaults.password?.toString() || "",
       operator_till: operatorDefaults.till?.toString() || "",
+      serial_number: printer.serial_number || "",
+      firmware: printer.firmware || "",
     });
   };
 
@@ -1213,6 +1214,8 @@ function App() {
                                 port: port.device,
                                 baudrate: String(detection.baudrate || "115200"),
                                 model: detection.model || "datecs_fp700mx",
+                                serial_number: detection.serial_number || "",
+                                firmware: detection.firmware || "",
                               });
                               setStatus({ type: "info", message: `Разпознат ${detection.name} на ${port.device} — форма попълнена` });
                             }}
@@ -1464,6 +1467,15 @@ function App() {
                           ? `TCP порт: ${printer.tcp_port || 4999}`
                           : `Baudrate: ${printer.baudrate}`} · Dry-run: {printer.dry_run ? "on" : "off"}
                       </p>
+                      {(printer.serial_number || printer.firmware || printer.fiscal_memory_number) && (
+                        <p className="muted small">
+                          {printer.serial_number && `S/N: ${printer.serial_number}`}
+                          {printer.serial_number && printer.firmware && " · "}
+                          {printer.firmware && `FW: ${printer.firmware}`}
+                          {(printer.serial_number || printer.firmware) && printer.fiscal_memory_number && " · "}
+                          {printer.fiscal_memory_number && `ФП: ${printer.fiscal_memory_number}`}
+                        </p>
+                      )}
                     </div>
                     <div className="printer-time">
                       <div>

@@ -20,6 +20,9 @@ class PrinterBase(BaseModel):
     enabled: bool = True
     dry_run: bool = False
     config: Dict[str, Any] = Field(default_factory=dict)
+    serial_number: Optional[str] = None
+    firmware: Optional[str] = None
+    fiscal_memory_number: Optional[str] = None
 
 
 class PrinterCreate(PrinterBase):
@@ -41,10 +44,16 @@ class PrinterUpdate(BaseModel):
     enabled: Optional[bool] = None
     dry_run: Optional[bool] = None
     config: Optional[Dict[str, Any]] = None
+    serial_number: Optional[str] = None
+    firmware: Optional[str] = None
+    fiscal_memory_number: Optional[str] = None
 
 
 class PrinterOut(PrinterBase):
     id: int
+    serial_number: Optional[str] = None
+    firmware: Optional[str] = None
+    fiscal_memory_number: Optional[str] = None
     created_at: str
     updated_at: str
 
