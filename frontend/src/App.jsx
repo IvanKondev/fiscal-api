@@ -366,6 +366,7 @@ function App() {
   const [availablePorts, setAvailablePorts] = useState([]);
   const [previewJob, setPreviewJob] = useState(null);
   const [detectingPorts, setDetectingPorts] = useState({});
+  const [renamingPrinter, setRenamingPrinter] = useState({ id: null, name: "" });
   const [lanDetectState, setLanDetectState] = useState({ status: "idle", result: null });
   const [mqttStatus, setMqttStatus] = useState({ enabled: false, connected: false });
   const [mqttMessages, setMqttMessages] = useState([]);
@@ -1265,34 +1266,64 @@ function App() {
                         </button>
                       </div>
                     </div>
-                    <div className="printer-actions">
-                      <button onClick={() => refreshPrinterInfo(printer.id)} disabled={loading}>
-                        🔄 Обнови инфо
-                      </button>
-                      <button onClick={async () => {
-                        const newName = window.prompt("Ново име на принтера:", printer.name);
-                        if (newName && newName.trim() && newName.trim() !== printer.name) {
-                          try {
-                            await apiRequest(`/printers/${printer.id}`, {
-                              method: "PUT",
-                              body: JSON.stringify({ name: newName.trim() }),
-                            });
-                            setStatus({ type: "success", message: "Името е обновено." });
-                            await refreshPrinters();
-                          } catch (error) {
-                            setStatus({ type: "error", message: error.message });
-                          }
-                        }
-                      }}>
-                        ✏️ Преименувай
-                      </button>
-                      <button
-                        className="danger"
-                        onClick={() => handleDelete(printer.id)}
-                      >
-                        Delete
-                      </button>
-                    </div>
+                    {renamingPrinter.id === printer.id ? (
+                      <div className="printer-actions" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                        <input
+                          autoFocus
+                          value={renamingPrinter.name}
+                          onChange={(e) => setRenamingPrinter({ ...renamingPrinter, name: e.target.value })}
+                          onKeyDown={(e) => {
+                            if (e.key === "Escape") setRenamingPrinter({ id: null, name: "" });
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              const btn = e.target.parentElement.querySelector(".primary");
+                              if (btn) btn.click();
+                            }
+                          }}
+                          style={{ flex: 1, minWidth: 150 }}
+                        />
+                        <button
+                          className="primary"
+                          disabled={loading}
+                          onClick={async () => {
+                            const newName = renamingPrinter.name.trim();
+                            if (newName && newName !== printer.name) {
+                              try {
+                                await apiRequest(`/printers/${printer.id}`, {
+                                  method: "PUT",
+                                  body: JSON.stringify({ name: newName }),
+                                });
+                                setStatus({ type: "success", message: "Името е обновено." });
+                                await refreshPrinters();
+                              } catch (error) {
+                                setStatus({ type: "error", message: error.message });
+                              }
+                            }
+                            setRenamingPrinter({ id: null, name: "" });
+                          }}
+                        >
+                          💾 Запази
+                        </button>
+                        <button onClick={() => setRenamingPrinter({ id: null, name: "" })}>
+                          ✕ Откажи
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="printer-actions">
+                        <button onClick={() => refreshPrinterInfo(printer.id)} disabled={loading}>
+                          🔄 Обнови инфо
+                        </button>
+                        <button onClick={() => setRenamingPrinter({ id: printer.id, name: printer.name })}>
+                          ✏️ Преименувай
+                        </button>
+                        <button
+                          className="danger"
+                          onClick={() => handleDelete(printer.id)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    )}
                   </div>
                 );
               })}

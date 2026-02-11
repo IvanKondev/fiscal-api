@@ -1224,19 +1224,19 @@ def fiscal_operation(
             }
         if payload_type == "storno":
             proto = getattr(adapter, "protocol_format", "hex4")
+            invoice = "I" if payload.get("invoice") else ""
             if proto == "byte":
-                # FP-2000: <OpCode>,<Password>,<TillNum>,<StornoType>,<DocNo>,<Date>[,<FM>][,<UNP>]
+                # FP-2000: <OpCode>,<Password>,<TillNum>,<Invoice>,<StornoType>,<DocNo>,<Date>[,<FM>][,<UNP>]
                 operator_data = _operator_data(payload, printer)
-                # _operator_data returns TAB-separated; convert to comma for FP-2000
                 operator_csv = operator_data.replace("\t", ",").rstrip(",")
                 storno_data = _build_storno_data(payload, sep=",")
-                data = f"{operator_csv},{storno_data}" if operator_csv else storno_data
+                data = f"{operator_csv},{invoice},{storno_data}" if operator_csv else f"{invoice},{storno_data}"
             else:
-                # FP-700MX: <OpCode><SEP><Password><SEP><TillNum><SEP><StornoType><SEP><DocNo><SEP><Date><SEP>[<FM><SEP>][<UNP><SEP>]
+                # FP-700MX: <OpCode><SEP><Password><SEP><TillNum><SEP><Invoice><SEP><StornoType><SEP><DocNo><SEP><Date><SEP>[<FM><SEP>][<UNP><SEP>]
                 operator_data = _operator_data(payload, printer)
                 storno_data = _build_storno_data(payload, sep="\t")
-                data = f"{operator_data}{storno_data}" if operator_data else storno_data
-            seq = _send(
+                data = f"{operator_data}{invoice}\t{storno_data}" if operator_data else f"{invoice}\t{storno_data}"
+            seq, storno_response = _send_with_response(
                 transport,
                 adapter,
                 CMD_STORNO,
@@ -1247,6 +1247,15 @@ def fiscal_operation(
                 printer_id,
                 correlation_id=correlation_id,
             )
+            # FP-2000 may return empty fields on error; check status bytes
+            storno_flags = _decode_status_flags(storno_response.status)
+            if storno_flags.get("syntax_error") or storno_flags.get("general_error"):
+                if not storno_response.fields or _error_code(storno_response.fields) is None:
+                    flag_msgs = _translate_error_flags(storno_flags)
+                    raise DatecsFiscalError(
+                        f"Сторно отхвърлено от принтера: {flag_msgs or 'syntax/general error'}",
+                        context="storno open",
+                    )
             if payload.get("auto"):
                 _SEQ_BY_PRINTER[printer_id] = seq
                 return
