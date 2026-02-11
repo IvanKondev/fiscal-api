@@ -492,6 +492,146 @@ def sync_printer_datetime(printer_id: int, payload: Dict[str, Any] | None = Body
         raise HTTPException(status_code=500, detail=f"Failed to sync printer date/time: {str(e)}")
 
 
+# ── Pinpad (card reader) endpoints ─────────────────────────────────────
+
+@router.post("/printers/{printer_id}/pinpad/ping")
+async def pinpad_ping(printer_id: int) -> Dict[str, Any]:
+    """Ping the pinpad to check if it's alive."""
+    printer = get_printer(printer_id)
+    if not printer:
+        raise HTTPException(status_code=404, detail="Printer not found")
+    try:
+        result = await asyncio.wait_for(
+            asyncio.to_thread(send_payload, printer, "pinpad_ping", {}),
+            timeout=10,
+        )
+        return result or {"alive": False}
+    except Exception as exc:
+        log_error("PINPAD_PING_FAIL", {"printer_id": printer_id, "error": str(exc)})
+        return {"alive": False, "error": str(exc)}
+
+
+@router.get("/printers/{printer_id}/pinpad/info")
+async def pinpad_info(printer_id: int) -> Dict[str, Any]:
+    """Get pinpad device info (model, serial, software version, terminal ID)."""
+    printer = get_printer(printer_id)
+    if not printer:
+        raise HTTPException(status_code=404, detail="Printer not found")
+    try:
+        result = await asyncio.wait_for(
+            asyncio.to_thread(send_payload, printer, "pinpad_info", {}),
+            timeout=10,
+        )
+        return result or {}
+    except Exception as exc:
+        log_error("PINPAD_INFO_FAIL", {"printer_id": printer_id, "error": str(exc)})
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/printers/{printer_id}/pinpad/status")
+async def pinpad_status(printer_id: int) -> Dict[str, Any]:
+    """Get pinpad status (reversal, end-of-day, reader state, report count)."""
+    printer = get_printer(printer_id)
+    if not printer:
+        raise HTTPException(status_code=404, detail="Printer not found")
+    try:
+        result = await asyncio.wait_for(
+            asyncio.to_thread(send_payload, printer, "pinpad_status", {}),
+            timeout=10,
+        )
+        return result or {}
+    except Exception as exc:
+        log_error("PINPAD_STATUS_FAIL", {"printer_id": printer_id, "error": str(exc)})
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/printers/{printer_id}/pinpad/purchase")
+async def pinpad_purchase(printer_id: int, body: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    """Start a card purchase transaction.
+
+    Body: {"amount": 1.50, "tip": 0.0, "cashback": 0.0, "reference": ""}
+    Amount is in currency units (e.g. 1.50 BGN).
+    """
+    printer = get_printer(printer_id)
+    if not printer:
+        raise HTTPException(status_code=404, detail="Printer not found")
+    if not body.get("amount"):
+        raise HTTPException(status_code=400, detail="amount is required")
+    lock = job_queue.get_lock(printer_id)
+    async with lock:
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(send_payload, printer, "pinpad_purchase", body),
+                timeout=JOB_TIMEOUT_SECONDS,
+            )
+            return result or {}
+        except Exception as exc:
+            log_error("PINPAD_PURCHASE_FAIL", {"printer_id": printer_id, "error": str(exc)})
+            raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/printers/{printer_id}/pinpad/void")
+async def pinpad_void(printer_id: int, body: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    """Void a previous purchase.
+
+    Body: {"amount": 1.50, "rrn": "...", "auth_id": "..."}
+    """
+    printer = get_printer(printer_id)
+    if not printer:
+        raise HTTPException(status_code=404, detail="Printer not found")
+    if not body.get("rrn") or not body.get("auth_id"):
+        raise HTTPException(status_code=400, detail="rrn and auth_id are required")
+    lock = job_queue.get_lock(printer_id)
+    async with lock:
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(send_payload, printer, "pinpad_void", body),
+                timeout=JOB_TIMEOUT_SECONDS,
+            )
+            return result or {}
+        except Exception as exc:
+            log_error("PINPAD_VOID_FAIL", {"printer_id": printer_id, "error": str(exc)})
+            raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/printers/{printer_id}/pinpad/end-of-day")
+async def pinpad_end_of_day(printer_id: int) -> Dict[str, Any]:
+    """Execute End of Day (settlement)."""
+    printer = get_printer(printer_id)
+    if not printer:
+        raise HTTPException(status_code=404, detail="Printer not found")
+    lock = job_queue.get_lock(printer_id)
+    async with lock:
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(send_payload, printer, "pinpad_end_of_day", {}),
+                timeout=JOB_TIMEOUT_SECONDS,
+            )
+            return result or {}
+        except Exception as exc:
+            log_error("PINPAD_EOD_FAIL", {"printer_id": printer_id, "error": str(exc)})
+            raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/printers/{printer_id}/pinpad/test-connection")
+async def pinpad_test_connection(printer_id: int) -> Dict[str, Any]:
+    """Execute a test connection to the Borica host."""
+    printer = get_printer(printer_id)
+    if not printer:
+        raise HTTPException(status_code=404, detail="Printer not found")
+    lock = job_queue.get_lock(printer_id)
+    async with lock:
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(send_payload, printer, "pinpad_test", {}),
+                timeout=JOB_TIMEOUT_SECONDS,
+            )
+            return result or {}
+        except Exception as exc:
+            log_error("PINPAD_TEST_FAIL", {"printer_id": printer_id, "error": str(exc)})
+            raise HTTPException(status_code=500, detail=str(exc))
+
+
 @router.get("/tools/models")
 def supported_models() -> Dict[str, Any]:
     return {"models": list_supported_models()}

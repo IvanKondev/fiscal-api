@@ -67,6 +67,13 @@ class JobCreate(BaseModel):
         "storno",
         "report",
         "cash",
+        "pinpad_purchase",
+        "pinpad_void",
+        "pinpad_end_of_day",
+        "pinpad_test",
+        "pinpad_info",
+        "pinpad_status",
+        "pinpad_ping",
     ]
     payload: Dict[str, Any]
 

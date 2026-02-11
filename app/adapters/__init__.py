@@ -19,6 +19,7 @@ from app.adapters.datecs_fp700xe import DatecsFP700XEAdapter
 from app.adapters.datecs_wp25x import DatecsWP25XAdapter
 from app.adapters.datecs_wp500x import DatecsWP500XAdapter
 from app.adapters.datecs_wp50x import DatecsWP50XAdapter
+from app.adapters.datecspay_bluepad import DatecsPayBluePadAdapter
 
 ADAPTERS: dict[str, type[PrinterAdapter]] = {
     DatecsOneToOneAdapter.model: DatecsOneToOneAdapter,
@@ -40,6 +41,7 @@ ADAPTERS: dict[str, type[PrinterAdapter]] = {
     DatecsSK131FAdapter.model: DatecsSK131FAdapter,
     DatecsFMP10Adapter.model: DatecsFMP10Adapter,
     DatecsFP700Adapter.model: DatecsFP700Adapter,
+    DatecsPayBluePadAdapter.model: DatecsPayBluePadAdapter,
 }
 
 DATECS_1TO1_FAMILY = {

@@ -373,6 +373,11 @@ function App() {
   const [mqttPublishTopic, setMqttPublishTopic] = useState("restaurant/1/bills/closed");
   const [mqttPublishPayload, setMqttPublishPayload] = useState('{"bill_id": 1, "waiter_id": 1}');
   const [mqttPublishing, setMqttPublishing] = useState(false);
+  const [pinpadForm, setPinpadForm] = useState({ printerId: "", amount: "", tip: "", rrn: "", auth_id: "" });
+  const [pinpadInfo, setPinpadInfo] = useState(null);
+  const [pinpadStatus, setPinpadStatus] = useState(null);
+  const [pinpadLoading, setPinpadLoading] = useState(false);
+  const [pinpadResult, setPinpadResult] = useState(null);
 
   const statusClass = status.type ? `status ${status.type}` : "status";
   const fiscalTotal = useMemo(
@@ -793,6 +798,35 @@ function App() {
     await Promise.all([refreshPrinters(), refreshLogs()]);
   };
 
+  const pinpadAction = async (action, body = {}) => {
+    if (!pinpadForm.printerId) {
+      setStatus({ type: "error", message: "Избери устройство." });
+      return;
+    }
+    setPinpadLoading(true);
+    setPinpadResult(null);
+    const labels = {
+      ping: "Ping...", info: "Зареждам инфо...", status: "Зареждам статус...",
+      purchase: "Плащане с карта...", void: "Анулиране...",
+      "end-of-day": "Край на деня...", "test-connection": "Тест връзка...",
+    };
+    setStatus({ type: "info", message: labels[action] || action });
+    try {
+      const isPost = ["ping", "purchase", "void", "end-of-day", "test-connection"].includes(action);
+      const opts = isPost ? { method: "POST", body: JSON.stringify(body) } : {};
+      const result = await apiRequest(`/printers/${pinpadForm.printerId}/pinpad/${action}`, opts);
+      if (action === "info") setPinpadInfo(result);
+      else if (action === "status") setPinpadStatus(result);
+      else setPinpadResult(result);
+      const ok = result?.alive !== false && result?.approved !== false;
+      setStatus({ type: ok ? "success" : "warning", message: JSON.stringify(result, null, 2).substring(0, 200) });
+    } catch (error) {
+      setStatus({ type: "error", message: error.message });
+    } finally {
+      setPinpadLoading(false);
+    }
+  };
+
   const detectPrinterOnPort = async (portDevice) => {
     setDetectingPorts((prev) => ({ ...prev, [portDevice]: "detecting" }));
     try {
@@ -1174,7 +1208,7 @@ function App() {
       </header>
 
       <nav className="tabs">
-        {["Printers", "Fiscal", "Storno", "Reports", "Jobs", "Logs", "MQTT"].map((tab) => (
+        {["Printers", "Fiscal", "Storno", "Reports", "Pinpad", "Jobs", "Logs", "MQTT"].map((tab) => (
           <button
             key={tab}
             className={tab === activeTab ? "tab active" : "tab"}
@@ -1942,6 +1976,190 @@ function App() {
                 Изпълни операция
               </button>
             </form>
+          </div>
+        </section>
+      )}
+
+      {activeTab === "Pinpad" && (
+        <section className="grid">
+          <div className="card form-card">
+            <div className="card-header">
+              <div>
+                <h2>💳 Картов терминал (PinPad)</h2>
+                <p className="muted">DatecsPay BluePad — плащане с банкова карта.</p>
+              </div>
+            </div>
+            <div className="form">
+              <label>
+                Устройство
+                <select
+                  value={pinpadForm.printerId}
+                  onChange={(e) => setPinpadForm({ ...pinpadForm, printerId: e.target.value })}
+                >
+                  <option value="">Избери устройство</option>
+                  {printers.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} ({p.port || p.ip_address || "-"})
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button onClick={() => pinpadAction("ping")} disabled={pinpadLoading}>
+                  📡 Ping
+                </button>
+                <button onClick={() => pinpadAction("info")} disabled={pinpadLoading}>
+                  ℹ️ Инфо
+                </button>
+                <button onClick={() => pinpadAction("status")} disabled={pinpadLoading}>
+                  📊 Статус
+                </button>
+                <button onClick={() => pinpadAction("test-connection")} disabled={pinpadLoading} className="secondary">
+                  🔌 Тест връзка
+                </button>
+                <button onClick={() => pinpadAction("end-of-day")} disabled={pinpadLoading} className="danger">
+                  📋 Край на деня
+                </button>
+              </div>
+
+              {pinpadInfo && (
+                <div style={{ background: "var(--bg)", borderRadius: 8, padding: 12, marginTop: 8 }}>
+                  <h3 style={{ marginBottom: 8 }}>ℹ️ Информация за устройството</h3>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 16px" }}>
+                    <span className="muted small">Модел:</span><strong>{pinpadInfo.model}</strong>
+                    <span className="muted small">Сериен №:</span><strong>{pinpadInfo.serial_number}</strong>
+                    <span className="muted small">Софтуер:</span><strong>{pinpadInfo.software_version}</strong>
+                    <span className="muted small">Терминал ID:</span><strong>{pinpadInfo.terminal_id}</strong>
+                    <span className="muted small">Меню тип:</span><strong>{pinpadInfo.menu_type}</strong>
+                  </div>
+                </div>
+              )}
+
+              {pinpadStatus && (
+                <div style={{ background: "var(--bg)", borderRadius: 8, padding: 12, marginTop: 8 }}>
+                  <h3 style={{ marginBottom: 8 }}>📊 Статус</h3>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 16px" }}>
+                    <span className="muted small">Четец:</span>
+                    <strong>{pinpadStatus.reader_state}</strong>
+                    <span className="muted small">Реверсал:</span>
+                    <strong style={{ color: pinpadStatus.has_reversal ? "#e53935" : "#4caf50" }}>
+                      {pinpadStatus.has_reversal ? "⚠️ Да" : "✅ Няма"}
+                    </strong>
+                    <span className="muted small">Край на деня:</span>
+                    <strong style={{ color: pinpadStatus.end_day_required ? "#f59e0b" : "#4caf50" }}>
+                      {pinpadStatus.end_day_required ? "⚠️ Необходим" : "✅ Не"}
+                    </strong>
+                    <span className="muted small">Записи в лога:</span>
+                    <strong>{pinpadStatus.report_count}</strong>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="card form-card">
+            <div className="card-header">
+              <div>
+                <h2>💰 Плащане с карта</h2>
+                <p className="muted">Сумата е в лева (напр. 1.50 = 1.50 лв).</p>
+              </div>
+            </div>
+            <div className="form">
+              <label>
+                Сума (лв) *
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={pinpadForm.amount}
+                  onChange={(e) => setPinpadForm({ ...pinpadForm, amount: e.target.value })}
+                  placeholder="0.00"
+                />
+              </label>
+              <label>
+                Бакшиш (лв)
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={pinpadForm.tip}
+                  onChange={(e) => setPinpadForm({ ...pinpadForm, tip: e.target.value })}
+                  placeholder="0.00"
+                />
+              </label>
+              <button
+                className="primary"
+                disabled={pinpadLoading || !pinpadForm.amount}
+                onClick={() => pinpadAction("purchase", {
+                  amount: Number(pinpadForm.amount),
+                  tip: Number(pinpadForm.tip) || 0,
+                })}
+              >
+                {pinpadLoading ? "Обработка..." : "💳 Плати с карта"}
+              </button>
+
+              <div style={{ marginTop: 16, borderTop: "1px solid var(--border)", paddingTop: 16 }}>
+                <h3>🔄 Анулиране (Void)</h3>
+                <p className="muted small" style={{ marginBottom: 8 }}>За анулиране е необходим RRN и Auth ID от оригиналната транзакция.</p>
+                <div className="row">
+                  <label>
+                    RRN
+                    <input
+                      value={pinpadForm.rrn}
+                      onChange={(e) => setPinpadForm({ ...pinpadForm, rrn: e.target.value })}
+                      placeholder="Номер от бележка"
+                    />
+                  </label>
+                  <label>
+                    Auth ID
+                    <input
+                      value={pinpadForm.auth_id}
+                      onChange={(e) => setPinpadForm({ ...pinpadForm, auth_id: e.target.value })}
+                      placeholder="Код за оторизация"
+                    />
+                  </label>
+                </div>
+                <button
+                  className="danger"
+                  disabled={pinpadLoading || !pinpadForm.amount || !pinpadForm.rrn || !pinpadForm.auth_id}
+                  onClick={() => pinpadAction("void", {
+                    amount: Number(pinpadForm.amount),
+                    rrn: pinpadForm.rrn,
+                    auth_id: pinpadForm.auth_id,
+                  })}
+                >
+                  {pinpadLoading ? "Обработка..." : "🔄 Анулирай"}
+                </button>
+              </div>
+
+              {pinpadResult && (
+                <div style={{
+                  background: pinpadResult.approved ? "var(--success-bg, #e6f9e6)" : pinpadResult.alive !== undefined ? "var(--bg)" : "var(--error-bg, #fde8e8)",
+                  borderRadius: 8, padding: 12, marginTop: 12,
+                  border: `1px solid ${pinpadResult.approved ? "#4caf50" : pinpadResult.alive !== undefined ? "var(--border)" : "#e53935"}`,
+                }}>
+                  <h3 style={{ marginBottom: 8 }}>
+                    {pinpadResult.approved ? "✅ Одобрена" : pinpadResult.alive ? "📡 Alive" : pinpadResult.alive === false ? "❌ Няма връзка" : "❌ Отказана"}
+                  </h3>
+                  {pinpadResult.approved !== undefined && (
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 16px" }}>
+                      {pinpadResult.amount_display && <><span className="muted small">Сума:</span><strong>{pinpadResult.amount_display} лв</strong></>}
+                      {pinpadResult.card_scheme && <><span className="muted small">Карта:</span><strong>{pinpadResult.card_scheme}</strong></>}
+                      {pinpadResult.masked_pan && <><span className="muted small">PAN:</span><strong>{pinpadResult.masked_pan}</strong></>}
+                      {pinpadResult.rrn && <><span className="muted small">RRN:</span><strong>{pinpadResult.rrn}</strong></>}
+                      {pinpadResult.auth_id && <><span className="muted small">Auth ID:</span><strong>{pinpadResult.auth_id}</strong></>}
+                      {pinpadResult.terminal_id && <><span className="muted small">Terminal:</span><strong>{pinpadResult.terminal_id}</strong></>}
+                      {pinpadResult.trans_date && <><span className="muted small">Дата:</span><strong>{pinpadResult.trans_date} {pinpadResult.trans_time}</strong></>}
+                      {pinpadResult.stan > 0 && <><span className="muted small">STAN:</span><strong>{pinpadResult.stan}</strong></>}
+                    </div>
+                  )}
+                  {pinpadResult.error_code > 0 && (
+                    <p className="error-text small" style={{ marginTop: 4 }}>Код грешка: {pinpadResult.error_code}</p>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </section>
       )}
