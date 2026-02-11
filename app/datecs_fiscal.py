@@ -1006,31 +1006,78 @@ def _report_command(payload: Dict[str, Any]) -> int:
     return int(text)
 
 
-def _build_storno_data(payload: Dict[str, Any], sep: str = ",") -> str:
-    """Build storno reference data.
+def _normalize_storno_date(raw_date: str) -> str:
+    """Normalise storno date to DD-MM-YY (with dashes) for FP-2000."""
+    d = raw_date.strip().replace("/", "-").replace(".", "-")
+    # Already has dashes
+    if "-" in d:
+        return d
+    # DDMMYY → DD-MM-YY
+    if len(d) == 6 and d.isdigit():
+        return f"{d[0:2]}-{d[2:4]}-{d[4:6]}"
+    # DDMMYYYY → DD-MM-YY
+    if len(d) == 8 and d.isdigit():
+        return f"{d[0:2]}-{d[2:4]}-{d[6:8]}"
+    return d
 
-    FP-2000  (byte): comma-separated
-    FP-700MX (hex4): TAB-separated with trailing TAB
+
+def _storno_reason_letter(st_type: Any) -> str:
+    """Map storno type to FP-2000 reason letter.
+
+    FP-2000 uses letters: E (operator error), R (refund), T (tax base reduction).
+    Accepts: 0/E/error → E, 1/R/refund → R, 2/T/tax → T.
     """
-    st_type = payload.get("storno_type", payload.get("type", 0))
+    raw = str(st_type).strip().upper()
+    mapping = {
+        "0": "E", "E": "E", "ERROR": "E",
+        "1": "R", "R": "R", "REFUND": "R",
+        "2": "T", "T": "T", "TAX": "T",
+    }
+    return mapping.get(raw, "E")
+
+
+def _build_storno_data_fp2000(payload: Dict[str, Any]) -> str:
+    """Build FP-2000 storno data.
+
+    Protocol: <StType><DocNo>,<StUNP>,<StDT>,<StFMIN>
+    StType: E (error), R (refund), T (tax reduction) — concatenated with DocNo.
+    StUNP: UNP of original receipt.
+    StDT: date+time of original receipt (ddMMyyHHmmss).
+    StFMIN: fiscal memory serial number of the printer.
+    Reference: ErpNet.FP BgDatecsPIslFiscalPrinter.Commands.cs
+    """
+    st_type_raw = payload.get("storno_type", payload.get("type", 0))
+    st_letter = _storno_reason_letter(st_type_raw)
     original = payload.get("original", {}) or {}
-    doc_no = original.get("doc_no") or original.get("document") or ""
-    date = original.get("date") or ""
-    fm = original.get("fm") or ""
-    unp = original.get("unp") or ""
-    parts = [str(st_type)]
-    if doc_no:
-        parts.append(str(doc_no))
-    if date:
-        parts.append(str(date))
-    if fm:
-        parts.append(str(fm))
-    if unp:
-        parts.append(str(unp))
-    result = sep.join(parts)
-    if sep == "\t":
-        result += "\t"
+    doc_no = str(original.get("doc_no") or original.get("document") or "0").strip()
+    unp = str(original.get("unp") or "").strip()
+    date = str(original.get("date") or "").strip()
+    fm = str(original.get("fm") or "").strip()
+    # StType concatenated with DocNo
+    result = f"{st_letter}{doc_no}"
+    # Reference group: ,StUNP,StDT,StFMIN — only if we have date or UNP
+    if unp or date:
+        result += f",{unp},{date},{fm}"
     return result
+
+
+def _build_storno_data_fp700(payload: Dict[str, Any]) -> str:
+    """Build FP-700MX storno data (TAB-separated).
+
+    Format: <StornoType><SEP><DocNo><SEP><DateTime><SEP>[<FM><SEP>][<UNP><SEP>]
+    """
+    st_type = str(payload.get("storno_type", payload.get("type", 0)))
+    original = payload.get("original", {}) or {}
+    doc_no = str(original.get("doc_no") or original.get("document") or "")
+    date = str(original.get("date") or "").strip()
+    fm = str(original.get("fm") or "").strip()
+    unp = str(original.get("unp") or "").strip()
+    parts = [st_type, doc_no, date]
+    if fm:
+        parts.append(fm)
+    if unp:
+        parts.append(unp)
+    return "\t".join(parts) + "\t"
 
 
 def fiscal_operation(
@@ -1223,18 +1270,23 @@ def fiscal_operation(
                 "correlation_id": correlation_id,
             }
         if payload_type == "storno":
+            # Auto-fill FM from printer record if not in payload
+            original = payload.get("original") or {}
+            if not original.get("fm"):
+                original["fm"] = printer.get("fiscal_memory_number") or ""
+                payload["original"] = original
             proto = getattr(adapter, "protocol_format", "hex4")
-            invoice = "I" if payload.get("invoice") else ""
             if proto == "byte":
-                # FP-2000: <OpCode>,<Password>,<TillNum>,<Invoice>,<StornoType>,<DocNo>,<Date>[,<FM>][,<UNP>]
+                # FP-2000: <OpNum>,<Password>,<TillNum>,<StType><DocNo>,<StUNP>,<StDT>,<StFMIN>
                 operator_data = _operator_data(payload, printer)
                 operator_csv = operator_data.replace("\t", ",").rstrip(",")
-                storno_data = _build_storno_data(payload, sep=",")
-                data = f"{operator_csv},{invoice},{storno_data}" if operator_csv else f"{invoice},{storno_data}"
+                storno_data = _build_storno_data_fp2000(payload)
+                data = f"{operator_csv},{storno_data}" if operator_csv else storno_data
             else:
                 # FP-700MX: <OpCode><SEP><Password><SEP><TillNum><SEP><Invoice><SEP><StornoType><SEP><DocNo><SEP><Date><SEP>[<FM><SEP>][<UNP><SEP>]
+                invoice = "I" if payload.get("invoice") else ""
                 operator_data = _operator_data(payload, printer)
-                storno_data = _build_storno_data(payload, sep="\t")
+                storno_data = _build_storno_data_fp700(payload)
                 data = f"{operator_data}{invoice}\t{storno_data}" if operator_data else f"{invoice}\t{storno_data}"
             seq, storno_response = _send_with_response(
                 transport,
