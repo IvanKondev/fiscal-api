@@ -52,11 +52,10 @@ class FP2000DataBuilder(DatecsDataBuilder):
     def open_receipt(self, op_num: str, password: str, till: str,
                      invoice: str = "", nsale: str = "") -> str:
         parts = [op_num, password, till]
-        if nsale:
-            parts.append(invoice or "")
-            parts.append(nsale)
-        elif invoice:
+        if invoice:
             parts.append(invoice)
+        if nsale:
+            parts.append(nsale)
         return ",".join(parts)
 
     # 0x31  Sale
@@ -96,7 +95,7 @@ class FP2000DataBuilder(DatecsDataBuilder):
                 except ValueError:
                     n = None
                 if n is not None and n != 0:
-                    suffix += f";{self.format_amount(abs(n))}"
+                    suffix += f";-{self.format_amount(abs(n))}"
 
         # Use department syntax or tax-letter syntax
         if department and department != "0":

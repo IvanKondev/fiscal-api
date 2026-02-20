@@ -819,7 +819,8 @@ function App() {
       else if (action === "status") setPinpadStatus(result);
       else setPinpadResult(result);
       const ok = result?.alive !== false && result?.approved !== false;
-      setStatus({ type: ok ? "success" : "warning", message: JSON.stringify(result, null, 2).substring(0, 200) });
+      const msg = result?.result_message || (result?.alive ? "Pinpad OK" : JSON.stringify(result, null, 2).substring(0, 200));
+      setStatus({ type: ok ? "success" : "warning", message: msg });
     } catch (error) {
       setStatus({ type: "error", message: error.message });
     } finally {
@@ -1396,13 +1397,19 @@ function App() {
                           {detected && (
                             <>
                               <p className="success small" style={{ fontWeight: 600 }}>
-                                ✅ {detection.name}
+                                {detection.device_type === "pinpad" ? "💳" : "✅"} {detection.name}
                               </p>
+                              {detection.device_type === "pinpad" && (
+                                <span className="badge info" style={{ fontSize: 10, padding: "2px 6px" }}>Картов терминал</span>
+                              )}
                               {detection.firmware && (
                                 <p className="muted small">FW: {detection.firmware}</p>
                               )}
                               {detection.serial_number && (
                                 <p className="muted small">S/N: {detection.serial_number}</p>
+                              )}
+                              {detection.terminal_id && (
+                                <p className="muted small">TID: {detection.terminal_id}</p>
                               )}
                               <p className="muted small">Baudrate: {detection.baudrate}</p>
                             </>
@@ -1427,6 +1434,7 @@ function App() {
                             className="primary"
                             onClick={async () => {
                               try {
+                                const isPinpad = detection.device_type === "pinpad";
                                 await apiRequest("/printers", {
                                   method: "POST",
                                   body: JSON.stringify({
@@ -1439,7 +1447,7 @@ function App() {
                                     serial_number: detection.serial_number || undefined,
                                     firmware: detection.firmware || undefined,
                                     fiscal_memory_number: detection.fiscal_memory_number || undefined,
-                                    config: { operator: { id: "1", password: "0000", till: "1" } },
+                                    config: isPinpad ? {} : { operator: { id: "1", password: "0000", till: "1" } },
                                   }),
                                 });
                                 setStatus({ type: "success", message: `✅ ${detection.name} добавен автоматично` });
@@ -1497,10 +1505,9 @@ function App() {
                     message: "Сигурен ли си, че искаш да откажеш отворения бон? Това действие не може да бъде отменено.",
                     onConfirm: async () => {
                       try {
-                        const response = await fetch(`${API_BASE}/printers/${fiscalSale.printerId}/cancel_receipt`, {
+                        await apiRequest(`/printers/${fiscalSale.printerId}/cancel_receipt`, {
                           method: "POST",
                         });
-                        if (!response.ok) throw new Error("Failed to cancel receipt");
                         setStatus({ type: "success", message: "✅ Бонът е отказан успешно" });
                         await refreshJobs();
                       } catch (error) {
@@ -1825,11 +1832,11 @@ function App() {
                     />
                   </label>
                   <label>
-                    Дата (DDMMYY) *
+                    Дата и час (DDMMYYhhmmss) *
                     <input
                       value={stornoForm.original.date}
                       onChange={(e) => setStornoForm({...stornoForm, original: {...stornoForm.original, date: e.target.value}})}
-                      placeholder="100226"
+                      placeholder="100226153000"
                       required
                     />
                   </label>
@@ -2142,20 +2149,23 @@ function App() {
                   <h3 style={{ marginBottom: 8 }}>
                     {pinpadResult.approved ? "✅ Одобрена" : pinpadResult.alive ? "📡 Alive" : pinpadResult.alive === false ? "❌ Няма връзка" : "❌ Отказана"}
                   </h3>
+                  {pinpadResult.result_message && !pinpadResult.approved && (
+                    <p style={{ color: "#e53935", fontWeight: 600, marginBottom: 8 }}>{pinpadResult.result_message}</p>
+                  )}
                   {pinpadResult.approved !== undefined && (
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 16px" }}>
-                      {pinpadResult.amount_display && <><span className="muted small">Сума:</span><strong>{pinpadResult.amount_display} лв</strong></>}
+                      {pinpadResult.amount_display && pinpadResult.amount_display !== "0.00" && <><span className="muted small">Сума:</span><strong>{pinpadResult.amount_display} лв</strong></>}
                       {pinpadResult.card_scheme && <><span className="muted small">Карта:</span><strong>{pinpadResult.card_scheme}</strong></>}
                       {pinpadResult.masked_pan && <><span className="muted small">PAN:</span><strong>{pinpadResult.masked_pan}</strong></>}
                       {pinpadResult.rrn && <><span className="muted small">RRN:</span><strong>{pinpadResult.rrn}</strong></>}
                       {pinpadResult.auth_id && <><span className="muted small">Auth ID:</span><strong>{pinpadResult.auth_id}</strong></>}
                       {pinpadResult.terminal_id && <><span className="muted small">Terminal:</span><strong>{pinpadResult.terminal_id}</strong></>}
+                      {pinpadResult.merchant_name && <><span className="muted small">Търговец:</span><strong>{pinpadResult.merchant_name}</strong></>}
+                      {pinpadResult.interface_name && <><span className="muted small">Интерфейс:</span><strong>{pinpadResult.interface_name}</strong></>}
                       {pinpadResult.trans_date && <><span className="muted small">Дата:</span><strong>{pinpadResult.trans_date} {pinpadResult.trans_time}</strong></>}
                       {pinpadResult.stan > 0 && <><span className="muted small">STAN:</span><strong>{pinpadResult.stan}</strong></>}
+                      {pinpadResult.currency && <><span className="muted small">Валута:</span><strong>{pinpadResult.currency}</strong></>}
                     </div>
-                  )}
-                  {pinpadResult.error_code > 0 && (
-                    <p className="error-text small" style={{ marginTop: 4 }}>Код грешка: {pinpadResult.error_code}</p>
                   )}
                 </div>
               )}
@@ -2469,8 +2479,9 @@ function App() {
               <button
                 className="danger"
                 onClick={() => {
+                  const fn = modal.onConfirm;
                   setModal({ show: false, title: "", message: "", onConfirm: null });
-                  if (modal.onConfirm) modal.onConfirm();
+                  if (fn) fn();
                 }}
               >
                 Потвърди

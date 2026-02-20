@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../Cloud TouchSale/cloudTS-restaurant-be"
+		},
+		{
+			"path": "../Cloud TouchSale/cloudTS-restaurant-fe"
+		}
+	],
+	"settings": {}
+}

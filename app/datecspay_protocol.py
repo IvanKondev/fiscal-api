@@ -450,21 +450,28 @@ def encode_tags_list(tags: List[int]) -> bytes:
 
 
 def decode_tag(data: bytes, offset: int) -> Tuple[int, int]:
-    """Decode tag number at offset. Returns (tag, new_offset)."""
+    """Decode tag number at offset. Returns (tag, new_offset).
+
+    Uses EMV standard encoding:
+    - If low 5 bits of first byte are all 1s (b0 & 0x1F == 0x1F),
+      the tag is multi-byte (0x9Fxx, 0xDFxx, 0x5Fxx).
+    - Otherwise it's a single-byte tag (0x81, 0x9A, etc.).
+    - For 3-byte tags: second byte has bit 7 set (0xDF80xx, 0xDFC1xx).
+    """
     if offset >= len(data):
         raise PinpadError("TLV decode: unexpected end of data (tag)")
     b0 = data[offset]
-    # 1-byte tag
-    if b0 < 0x80:
+    # Single-byte tag: low 5 bits are NOT all 1s
+    if (b0 & 0x1F) != 0x1F:
         return b0, offset + 1
-    # Multi-byte: check if next byte has high bit for 3-byte tag
+    # Multi-byte tag: need at least one more byte
     if offset + 1 >= len(data):
         return b0, offset + 1
     b1 = data[offset + 1]
     # 2-byte tag (0x9Fxx, 0xDFxx, 0x5Fxx)
     tag2 = (b0 << 8) | b1
-    if offset + 2 < len(data) and b0 == 0xDF and b1 >= 0x80:
-        # 3-byte tag (0xDFC1xx, 0xDF80xx)
+    # Check for 3-byte tag: second byte has bit 7 set (0xDF80xx, 0xDFC1xx)
+    if (b1 & 0x80) and offset + 2 < len(data):
         b2 = data[offset + 2]
         tag3 = (b0 << 16) | (b1 << 8) | b2
         return tag3, offset + 3
@@ -558,6 +565,10 @@ def _read_packet(transport: BaseTransport, timeout_s: float = RESPONSE_TIMEOUT) 
     )
 
 
+# Module-level queue for events received while expecting a response
+_pending_events: list[bytes] = []
+
+
 def send_command(
     transport: BaseTransport,
     cmd: int,
@@ -565,26 +576,53 @@ def send_command(
     timeout_s: float = RESPONSE_TIMEOUT,
     correlation_id: str = "",
 ) -> PinpadResponse:
-    """Send a command and wait for response."""
+    """Send a command and wait for response.
+
+    If an event packet arrives instead of a response, it is queued
+    in _pending_events so the transaction loop can pick it up.
+    """
     packet = build_packet(cmd, data)
     log_info("PINPAD_SEND", {
         "cmd": f"0x{cmd:02X}",
         "data_hex": data.hex() if data else "",
-        "packet_hex": packet.hex(),
         "packet_len": len(packet),
         "correlation_id": correlation_id,
     })
     transport.write(packet)
-    raw = _read_packet(transport, timeout_s)
-    response = parse_response_packet(raw)
-    log_info("PINPAD_RECV", {
-        "status": f"0x{response.status:02X}",
-        "status_name": response.status_name,
-        "data_hex": response.data.hex() if response.data else "",
-        "data_len": len(response.data),
-        "correlation_id": correlation_id,
-    })
-    return response
+
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        remaining = max(0.1, deadline - time.monotonic())
+        raw = _read_packet(transport, remaining)
+        pkt_type = raw[1] if len(raw) > 1 else 0xFF
+        log_info("PINPAD_RAW_PKT", {
+            "pkt_type": f"0x{pkt_type:02X}",
+            "raw_len": len(raw),
+            "raw_hex": raw[:32].hex(),
+            "correlation_id": correlation_id,
+        })
+        if pkt_type == 0x00:
+            # This is the response we're waiting for
+            response = parse_response_packet(raw)
+            log_info("PINPAD_RECV", {
+                "status": f"0x{response.status:02X}",
+                "status_name": response.status_name,
+                "data_len": len(response.data),
+                "correlation_id": correlation_id,
+            })
+            return response
+        else:
+            # Got an event while waiting for response — queue it
+            log_warning("PINPAD_EVENT_DURING_CMD", {
+                "expected": "response(0x00)",
+                "got": f"0x{pkt_type:02X}",
+                "raw_len": len(raw),
+                "raw_hex": raw[:64].hex(),
+                "correlation_id": correlation_id,
+            })
+            _pending_events.append(raw)
+
+    raise PinpadTimeoutError(f"No response within {timeout_s}s")
 
 
 def read_event(

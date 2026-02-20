@@ -78,7 +78,7 @@ class FP700MXDataBuilder(DatecsDataBuilder):
                 except ValueError:
                     n = None
                 if n is not None and n != 0:
-                    discount_type = "4" if n < 0 else "3"
+                    discount_type = "4"
                     discount_value = self.format_amount(abs(n))
 
         fields = [name, tax, price, qty, discount_type, discount_value, department]

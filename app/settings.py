@@ -42,5 +42,7 @@ MQTT_WS_PATH = os.getenv("MQTT_WS_PATH", "/mqtt")
 MQTT_USERNAME = os.getenv("MQTT_USERNAME", "")
 MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "")
 MQTT_CLIENT_ID = os.getenv("MQTT_CLIENT_ID", "fiscal-api")
-MQTT_TOPIC_SUBSCRIBE = os.getenv("MQTT_TOPIC_SUBSCRIBE", "restaurant/1/bills/closed")
 MQTT_KEEPALIVE = int(os.getenv("MQTT_KEEPALIVE", "60"))
+
+# Unique GUID identifying this printer instance (must match fiscal_printers.guid in BE)
+PRINTER_GUID = os.getenv("PRINTER_GUID", "")

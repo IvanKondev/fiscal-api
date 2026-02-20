@@ -270,12 +270,7 @@ def cancel_receipt(printer_id: int) -> Dict[str, Any]:
     if not printer:
         raise HTTPException(status_code=404, detail="Printer not found")
     
-    job = create_job({
-        "printer_id": printer_id,
-        "operation": "cancel_receipt",
-        "payload": {"reason": "Manual cancellation by user"},
-        "status": "printing",
-    })
+    job = create_job(printer_id, "cancel_receipt", {"reason": "Manual cancellation by user"})
     
     try:
         adapter = get_adapter(printer["model"], printer.get("config") or {})
@@ -562,12 +557,15 @@ async def pinpad_purchase(printer_id: int, body: Dict[str, Any] = Body(...)) -> 
         try:
             result = await asyncio.wait_for(
                 asyncio.to_thread(send_payload, printer, "pinpad_purchase", body),
-                timeout=JOB_TIMEOUT_SECONDS,
+                timeout=120,
             )
             return result or {}
+        except asyncio.TimeoutError:
+            log_error("PINPAD_PURCHASE_TIMEOUT", {"printer_id": printer_id})
+            raise HTTPException(status_code=504, detail="Card transaction timed out (120s)")
         except Exception as exc:
             log_error("PINPAD_PURCHASE_FAIL", {"printer_id": printer_id, "error": str(exc)})
-            raise HTTPException(status_code=500, detail=str(exc))
+            raise HTTPException(status_code=500, detail=str(exc) or repr(exc))
 
 
 @router.post("/printers/{printer_id}/pinpad/void")
@@ -586,12 +584,15 @@ async def pinpad_void(printer_id: int, body: Dict[str, Any] = Body(...)) -> Dict
         try:
             result = await asyncio.wait_for(
                 asyncio.to_thread(send_payload, printer, "pinpad_void", body),
-                timeout=JOB_TIMEOUT_SECONDS,
+                timeout=120,
             )
             return result or {}
+        except asyncio.TimeoutError:
+            log_error("PINPAD_VOID_TIMEOUT", {"printer_id": printer_id})
+            raise HTTPException(status_code=504, detail="Void transaction timed out (120s)")
         except Exception as exc:
             log_error("PINPAD_VOID_FAIL", {"printer_id": printer_id, "error": str(exc)})
-            raise HTTPException(status_code=500, detail=str(exc))
+            raise HTTPException(status_code=500, detail=str(exc) or repr(exc))
 
 
 @router.post("/printers/{printer_id}/pinpad/end-of-day")
@@ -605,12 +606,15 @@ async def pinpad_end_of_day(printer_id: int) -> Dict[str, Any]:
         try:
             result = await asyncio.wait_for(
                 asyncio.to_thread(send_payload, printer, "pinpad_end_of_day", {}),
-                timeout=JOB_TIMEOUT_SECONDS,
+                timeout=330,
             )
             return result or {}
+        except asyncio.TimeoutError:
+            log_error("PINPAD_EOD_TIMEOUT", {"printer_id": printer_id})
+            raise HTTPException(status_code=504, detail="End-of-day timed out (330s). Borica host may be slow.")
         except Exception as exc:
             log_error("PINPAD_EOD_FAIL", {"printer_id": printer_id, "error": str(exc)})
-            raise HTTPException(status_code=500, detail=str(exc))
+            raise HTTPException(status_code=500, detail=str(exc) or repr(exc))
 
 
 @router.post("/printers/{printer_id}/pinpad/test-connection")
@@ -624,12 +628,15 @@ async def pinpad_test_connection(printer_id: int) -> Dict[str, Any]:
         try:
             result = await asyncio.wait_for(
                 asyncio.to_thread(send_payload, printer, "pinpad_test", {}),
-                timeout=JOB_TIMEOUT_SECONDS,
+                timeout=120,
             )
             return result or {}
+        except asyncio.TimeoutError:
+            log_error("PINPAD_TEST_TIMEOUT", {"printer_id": printer_id})
+            raise HTTPException(status_code=504, detail="Test connection timed out (120s)")
         except Exception as exc:
             log_error("PINPAD_TEST_FAIL", {"printer_id": printer_id, "error": str(exc)})
-            raise HTTPException(status_code=500, detail=str(exc))
+            raise HTTPException(status_code=500, detail=str(exc) or repr(exc))
 
 
 @router.get("/tools/models")

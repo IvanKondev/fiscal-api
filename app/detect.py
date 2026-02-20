@@ -191,6 +191,12 @@ def detect_printer_on_port(
     """
     baudrates = [baudrate] if baudrate else COMMON_BAUDRATES
 
+    # ── Try DatecsPay pinpad first (single fast PING packet) ──
+    pinpad_result = _try_detect_pinpad(port, baudrates)
+    if pinpad_result:
+        return pinpad_result
+
+    # ── Then try Datecs fiscal protocol (slower, multi-format) ──
     for baud in baudrates:
         for proto, slen in [("hex4", 8), ("byte", 6)]:
             try:
@@ -221,6 +227,135 @@ def detect_printer_on_port(
                 continue
 
     return {"detected": False, "port": port, "error": "No Datecs printer found"}
+
+
+def _try_detect_pinpad(
+    port: str,
+    baudrates: list[int],
+) -> Optional[Dict[str, Any]]:
+    """Try to detect a DatecsPay card reader (pinpad) on a serial port.
+
+    Sends a PING command using the DatecsPay protocol. If it responds,
+    follows up with GET PINPAD INFO to identify the device.
+    """
+    from app.datecspay_protocol import (
+        CMD_BORICA, BorCmd, START_BYTE,
+        build_packet, parse_response_packet,
+        PinpadError, PinpadTimeoutError,
+    )
+
+    # Pinpad standard baud is 115200 — try it first
+    pinpad_bauds = sorted(baudrates, key=lambda b: (0 if b == 115200 else 1, b))
+
+    for baud in pinpad_bauds:
+        config = SerialConfig(
+            port=port, baudrate=baud, timeout_ms=1000,
+        )
+        transport = SerialTransport(config)
+        try:
+            transport.open()
+            # Send PING
+            ping_data = bytes([BorCmd.PING])
+            packet = build_packet(CMD_BORICA, ping_data)
+            log_info("DETECT_PINPAD_TRY", {"port": port, "baudrate": baud})
+            transport.write(packet)
+
+            # Read response
+            import time
+            buffer = bytearray()
+            deadline = time.monotonic() + 1.0
+            while time.monotonic() < deadline:
+                chunk = transport.read(1)
+                if chunk:
+                    buffer.extend(chunk)
+                    if len(buffer) >= 5 and buffer[0] == START_BYTE:
+                        lh, ll = buffer[3], buffer[4]
+                        total = 5 + ((lh << 8) | ll) + 1
+                        if len(buffer) >= total:
+                            break
+                else:
+                    time.sleep(0.005)
+
+            if not buffer or buffer[0] != START_BYTE:
+                continue
+
+            resp = parse_response_packet(bytes(buffer))
+            if resp.status != 0x00:
+                continue
+
+            # PING ok — now GET PINPAD INFO
+            info_data = bytes([BorCmd.GET_PINPAD_INFO])
+            info_packet = build_packet(CMD_BORICA, info_data)
+            transport.write(info_packet)
+
+            buffer2 = bytearray()
+            deadline2 = time.monotonic() + 2.0
+            while time.monotonic() < deadline2:
+                chunk = transport.read(1)
+                if chunk:
+                    buffer2.extend(chunk)
+                    if len(buffer2) >= 5 and buffer2[0] == START_BYTE:
+                        lh2, ll2 = buffer2[3], buffer2[4]
+                        total2 = 5 + ((lh2 << 8) | ll2) + 1
+                        if len(buffer2) >= total2:
+                            break
+                else:
+                    time.sleep(0.005)
+
+            name = "DatecsPay PinPad"
+            serial_number = ""
+            firmware = ""
+            terminal_id = ""
+
+            if buffer2 and buffer2[0] == START_BYTE:
+                try:
+                    info_resp = parse_response_packet(bytes(buffer2))
+                    if info_resp.status == 0x00 and len(info_resp.data) >= 34:
+                        d = info_resp.data
+                        name = d[0:20].decode("ascii", errors="replace").rstrip("\x00").strip()
+                        serial_number = d[20:30].decode("ascii", errors="replace").rstrip("\x00").strip()
+                        sv = d[30:34]
+                        firmware = f"{sv[0]}.{sv[1]}.{sv[2]}.{sv[3]}"
+                        if len(d) >= 42:
+                            terminal_id = d[34:42].decode("ascii", errors="replace").rstrip("\x00").strip()
+                except Exception:
+                    pass
+
+            log_info("PINPAD_DETECTED", {
+                "port": port, "baudrate": baud,
+                "name": name, "serial_number": serial_number,
+                "firmware": firmware, "terminal_id": terminal_id,
+            })
+            return {
+                "detected": True,
+                "device_type": "pinpad",
+                "name": name,
+                "model": "datecspay_bluepad",
+                "firmware": firmware,
+                "serial_number": serial_number,
+                "terminal_id": terminal_id,
+                "port": port,
+                "baudrate": baud,
+                "protocol": "datecspay",
+            }
+
+        except (OSError, serial_lib.SerialException) as exc:
+            log_info("DETECT_PINPAD_PORT_FAIL", {
+                "port": port, "baudrate": baud, "error": str(exc)[:120],
+            })
+            return None  # port is busy / inaccessible — stop trying
+        except Exception as exc:
+            log_info("DETECT_PINPAD_FAIL", {
+                "port": port, "baudrate": baud, "error": str(exc)[:120],
+            })
+            continue
+        finally:
+            try:
+                transport.close()
+            except Exception:
+                pass
+
+    return None
 
 
 def detect_printer_on_lan(

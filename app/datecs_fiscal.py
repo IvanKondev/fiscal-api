@@ -216,6 +216,34 @@ def _raise_on_error(
     correlation_id: str | None = None,
 ) -> None:
     error_code = _error_code(fields)
+    # FP-2000 byte protocol may return no error code in fields but set
+    # error bits in the status bytes.  Detect syntax/command errors.
+    # Note: general_error (bit 5) is often set even on success, so only
+    # check specific error flags.
+    if error_code is None and status:
+        flags = _decode_status_flags(status)
+        has_error = (
+            flags.get("syntax_error")
+            or flags.get("command_not_allowed")
+            or flags.get("invalid_command_code")
+        )
+        if has_error:
+            user_msg = _translate_error_flags(flags)
+            log_error(
+                "DATECS_STATUS_ERROR",
+                {
+                    "context": context,
+                    "status_hex": status.hex(),
+                    "status_flags": flags,
+                    "fields": fields,
+                    "data": data,
+                    "correlation_id": correlation_id,
+                },
+            )
+            raise DatecsFiscalError(
+                f"Грешка от принтера (status): {user_msg or 'Обща грешка'}",
+                context=context,
+            )
     if error_code is None:
         return
     status_hex = status.hex() if status else ""
@@ -1036,6 +1064,31 @@ def _storno_reason_letter(st_type: Any) -> str:
     return mapping.get(raw, "E")
 
 
+def _normalize_storno_datetime_fp2000(raw: str) -> str:
+    """Normalise storno date+time to DDMMYYhhmmss (12 digits) for FP-2000.
+
+    Accepts various formats:
+      - DDMMYYhhmmss (12 digits) → pass through
+      - DDMMYY (6 digits) → append 000000 for time
+      - DD-MM-YY, DD-MM-YY hh:mm:ss, DD-MM-YYYY, etc. → strip separators
+      - DDMMYYYYhhmmss (14 digits) → truncate year to 2 digits
+    """
+    d = raw.strip().replace("/", "-").replace(".", "-")
+    # Strip dashes, colons, spaces to get pure digits
+    digits = d.replace("-", "").replace(":", "").replace(" ", "")
+    if len(digits) == 6 and digits.isdigit():
+        return digits + "000000"
+    if len(digits) == 12 and digits.isdigit():
+        return digits
+    if len(digits) == 14 and digits.isdigit():
+        # DDMMYYYYhhmmss → DDMMYYhhmmss
+        return digits[0:4] + digits[6:]
+    if len(digits) == 8 and digits.isdigit():
+        # DDMMYYhhmm → append 00 for seconds
+        return digits + "0000"
+    return digits
+
+
 def _build_storno_data_fp2000(payload: Dict[str, Any]) -> str:
     """Build FP-2000 storno data.
 
@@ -1051,12 +1104,15 @@ def _build_storno_data_fp2000(payload: Dict[str, Any]) -> str:
     original = payload.get("original", {}) or {}
     doc_no = str(original.get("doc_no") or original.get("document") or "0").strip()
     unp = str(original.get("unp") or "").strip()
-    date = str(original.get("date") or "").strip()
+    date_raw = str(original.get("date") or "").strip()
     fm = str(original.get("fm") or "").strip()
+    # Normalise date+time to DDMMYYhhmmss
+    date = _normalize_storno_datetime_fp2000(date_raw) if date_raw else ""
     # StType concatenated with DocNo
     result = f"{st_letter}{doc_no}"
-    # Reference group: ,StUNP,StDT,StFMIN — only if we have date or UNP
-    if unp or date:
+    # Per protocol: StUNP is mandatory when StDT/StFMIN are present.
+    # If UNP is missing, send only DocNo — the printer will search its journal.
+    if unp:
         result += f",{unp},{date},{fm}"
     return result
 

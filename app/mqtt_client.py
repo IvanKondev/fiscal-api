@@ -1,9 +1,14 @@
 """
 MQTT client for FiscalAPI — powered by aiomqtt (async).
 
-Connects to EMQX broker over WebSocket, subscribes to configured topics,
-logs all incoming messages. Ready to be extended with job creation
-once the topic structure and message format are agreed upon.
+Connects to EMQX broker, subscribes to fiscal/{PRINTER_GUID}/print/#,
+creates print jobs from incoming messages, and publishes results back
+to fiscal/{PRINTER_GUID}/result.
+
+Topic structure:
+  fiscal/{guid}/print/receipt  — BE → FiscalAPI: print fiscal receipt
+  fiscal/{guid}/print/report   — BE → FiscalAPI: print Z/X report
+  fiscal/{guid}/result         — FiscalAPI → BE: job result (success/error)
 """
 from __future__ import annotations
 
@@ -15,6 +20,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from app.app_logging import log_error, log_info
+from app.db import create_job, get_job, list_printers
 from app.settings import (
     MQTT_BROKER_HOST,
     MQTT_BROKER_PORT,
@@ -22,13 +28,24 @@ from app.settings import (
     MQTT_ENABLED,
     MQTT_KEEPALIVE,
     MQTT_PASSWORD,
-    MQTT_TOPIC_SUBSCRIBE,
     MQTT_TRANSPORT,
     MQTT_USERNAME,
     MQTT_WS_PATH,
+    PRINTER_GUID,
 )
 
 logger = logging.getLogger("mqtt")
+
+# Map topic suffix → FiscalAPI payload_type
+_TOPIC_TO_PAYLOAD_TYPE = {
+    "receipt": "fiscal_receipt",
+    "report": "report",
+}
+
+# How often to poll for job completion (seconds)
+_JOB_POLL_INTERVAL = 1.0
+# Max time to wait for a job to finish before giving up (seconds)
+_JOB_WAIT_TIMEOUT = 60.0
 
 
 class MqttBridge:
@@ -43,6 +60,7 @@ class MqttBridge:
         self._message_count = 0
         self._last_message: Optional[Dict[str, Any]] = None
         self._messages: deque[Dict[str, Any]] = deque(maxlen=self.MAX_HISTORY)
+        self._printer_id: Optional[int] = None
 
     @property
     def connected(self) -> bool:
@@ -50,21 +68,46 @@ class MqttBridge:
 
     @property
     def enabled(self) -> bool:
-        return MQTT_ENABLED and bool(MQTT_BROKER_HOST)
+        return MQTT_ENABLED and bool(MQTT_BROKER_HOST) and bool(PRINTER_GUID)
+
+    @property
+    def subscribe_topic(self) -> str:
+        return f"fiscal/{PRINTER_GUID}/print/#"
+
+    @property
+    def result_topic(self) -> str:
+        return f"fiscal/{PRINTER_GUID}/result"
+
+    def _resolve_printer_id(self) -> Optional[int]:
+        """Find the first enabled printer to use for MQTT jobs."""
+        if self._printer_id is not None:
+            return self._printer_id
+        printers = list_printers()
+        for p in printers:
+            if p.get("enabled"):
+                self._printer_id = int(p["id"])
+                return self._printer_id
+        return None
 
     def start(self) -> None:
         """Start the MQTT listener as an asyncio background task."""
         if not self.enabled:
-            log_info("MQTT_DISABLED", {
-                "reason": "MQTT_ENABLED=false or MQTT_BROKER_HOST empty",
-            })
+            reason = []
+            if not MQTT_ENABLED:
+                reason.append("MQTT_ENABLED=false")
+            if not MQTT_BROKER_HOST:
+                reason.append("MQTT_BROKER_HOST empty")
+            if not PRINTER_GUID:
+                reason.append("PRINTER_GUID empty")
+            log_info("MQTT_DISABLED", {"reason": ", ".join(reason)})
             return
         self._task = asyncio.create_task(self._run())
         log_info("MQTT_STARTING", {
             "broker": f"{MQTT_BROKER_HOST}:{MQTT_BROKER_PORT}",
             "transport": MQTT_TRANSPORT,
             "client_id": MQTT_CLIENT_ID,
-            "topic": MQTT_TOPIC_SUBSCRIBE,
+            "printer_guid": PRINTER_GUID,
+            "subscribe_topic": self.subscribe_topic,
         })
 
     async def stop(self) -> None:
@@ -101,7 +144,9 @@ class MqttBridge:
             "broker": f"{MQTT_BROKER_HOST}:{MQTT_BROKER_PORT}" if self.enabled else None,
             "transport": MQTT_TRANSPORT,
             "client_id": MQTT_CLIENT_ID,
-            "topic": MQTT_TOPIC_SUBSCRIBE,
+            "printer_guid": PRINTER_GUID,
+            "subscribe_topic": self.subscribe_topic if self.enabled else None,
+            "result_topic": self.result_topic if self.enabled else None,
             "message_count": self._message_count,
             "last_message": self._last_message,
         }
@@ -135,13 +180,13 @@ class MqttBridge:
                     self._connected = True
                     log_info("MQTT_CONNECTED", {
                         "broker": f"{MQTT_BROKER_HOST}:{MQTT_BROKER_PORT}",
-                        "topic": MQTT_TOPIC_SUBSCRIBE,
+                        "subscribe_topic": self.subscribe_topic,
                     })
 
-                    await client.subscribe(MQTT_TOPIC_SUBSCRIBE)
+                    await client.subscribe(self.subscribe_topic)
 
                     async for message in client.messages:
-                        self._on_message(message)
+                        await self._on_message(message)
 
             except asyncio.CancelledError:
                 log_info("MQTT_CANCELLED", {})
@@ -153,15 +198,14 @@ class MqttBridge:
                 log_info("MQTT_RECONNECTING", {"wait_seconds": 5})
                 await asyncio.sleep(5)
 
-    def _on_message(self, message: Any) -> None:
-        """Handle an incoming MQTT message — log it for now."""
+    async def _on_message(self, message: Any) -> None:
+        """Handle an incoming MQTT message — route to job queue."""
         topic = str(message.topic)
         try:
             payload_raw = message.payload.decode("utf-8")
         except (UnicodeDecodeError, AttributeError):
             payload_raw = str(message.payload)
 
-        # Try to parse as JSON
         payload_parsed = None
         try:
             payload_parsed = json.loads(payload_raw)
@@ -186,10 +230,88 @@ class MqttBridge:
             "count": self._message_count,
         })
 
-        # ── TODO: Route message to job queue when format is agreed ──
-        # Example future flow:
-        #   printer_id = extract_printer_id(topic)
-        #   job = create_job(printer_id, payload_type, payload_parsed)
+        if not isinstance(payload_parsed, dict):
+            log_error("MQTT_INVALID_PAYLOAD", {"topic": topic, "reason": "not a JSON object"})
+            return
+
+        # Extract action from topic: fiscal/{guid}/print/{action}
+        parts = topic.split("/")
+        action = parts[-1] if len(parts) >= 4 else None
+        payload_type = _TOPIC_TO_PAYLOAD_TYPE.get(action)
+        if not payload_type:
+            log_error("MQTT_UNKNOWN_ACTION", {"topic": topic, "action": action})
+            return
+
+        request_id = payload_parsed.get("request_id", "")
+
+        printer_id = self._resolve_printer_id()
+        if printer_id is None:
+            log_error("MQTT_NO_PRINTER", {"topic": topic})
+            await self._publish_result(request_id, "failed", error="No enabled printer found")
+            return
+
+        # Create job in the queue — the existing JobQueue will pick it up
+        try:
+            job = create_job(printer_id, payload_type, payload_parsed)
+            job_id = int(job["id"])
+            log_info("MQTT_JOB_CREATED", {
+                "job_id": job_id,
+                "printer_id": printer_id,
+                "payload_type": payload_type,
+                "request_id": request_id,
+            })
+        except Exception as exc:
+            log_error("MQTT_JOB_CREATE_ERROR", {"error": str(exc), "topic": topic})
+            await self._publish_result(request_id, "failed", error=str(exc))
+            return
+
+        # Wait for job completion in a background task and publish result
+        asyncio.create_task(self._wait_and_publish(job_id, request_id))
+
+    async def _wait_and_publish(self, job_id: int, request_id: str) -> None:
+        """Poll for job completion, then publish result via MQTT."""
+        elapsed = 0.0
+        while elapsed < _JOB_WAIT_TIMEOUT:
+            await asyncio.sleep(_JOB_POLL_INTERVAL)
+            elapsed += _JOB_POLL_INTERVAL
+            job = get_job(job_id)
+            if not job:
+                break
+            if job["status"] in ("success", "failed"):
+                await self._publish_result(
+                    request_id=request_id,
+                    status=job["status"],
+                    result=job.get("result"),
+                    error=job.get("error"),
+                )
+                return
+
+        # Timeout
+        log_error("MQTT_JOB_TIMEOUT", {"job_id": job_id, "request_id": request_id})
+        await self._publish_result(
+            request_id=request_id,
+            status="failed",
+            error=f"Job {job_id} timed out after {_JOB_WAIT_TIMEOUT}s",
+        )
+
+    async def _publish_result(
+        self,
+        request_id: str,
+        status: str,
+        result: Optional[Dict[str, Any]] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        """Publish job result to fiscal/{PRINTER_GUID}/result."""
+        payload: Dict[str, Any] = {
+            "request_id": request_id,
+            "printer_guid": PRINTER_GUID,
+            "status": status,
+        }
+        if result:
+            payload["result"] = result
+        if error:
+            payload["error"] = error
+        await self.publish(self.result_topic, payload)
 
 
 # ── Singleton ─────────────────────────────────────────────────────
