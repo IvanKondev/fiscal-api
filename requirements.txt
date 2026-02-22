@@ -4,3 +4,4 @@ pydantic>=2.5.0
 pyserial>=3.5
 pyusb>=1.2
 aiomqtt==2.3.0
+python-dotenv>=1.0.0

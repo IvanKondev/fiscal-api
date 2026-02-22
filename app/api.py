@@ -59,8 +59,8 @@ def _validate_model(model: str | None) -> None:
 def _validate_transport(transport: str | None) -> None:
     if transport is None:
         return
-    if transport.lower() not in {"serial", "usb"}:
-        raise HTTPException(status_code=400, detail="Transport must be 'serial' or 'usb'.")
+    if transport.lower() not in {"serial", "usb", "lan"}:
+        raise HTTPException(status_code=400, detail="Transport must be 'serial', 'usb' or 'lan'.")
 
 
 @router.get("/health")

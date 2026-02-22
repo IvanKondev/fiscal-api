@@ -98,11 +98,37 @@ const paymentOptions = [
   { value: "L", label: "L - Add. 4" },
 ];
 
-const modelOptions = ["datecs_fp700mx"];
-const modelLabels = {
-  datecs_fp700mx: "Datecs FP700MX",
+const modelLabel = (model) => {
+  const labels = {
+    datecs_fp700mx: "Datecs FP700MX",
+    datecs_fp2000: "Datecs FP2000",
+    datecs_fp700x: "Datecs FP700X",
+    datecs_fp700xe: "Datecs FP700XE",
+    datecs_fmp350x: "Datecs FMP350X",
+    datecs_fmp55x: "Datecs FMP55X",
+    datecs_wp500x: "Datecs WP500X",
+    datecs_wp50x: "Datecs WP50X",
+    datecs_dp25x: "Datecs DP25X",
+    datecs_wp25x: "Datecs WP25X",
+    datecs_dp150x: "Datecs DP150X",
+    datecs_dp05c: "Datecs DP05C",
+    datecs_fp800: "Datecs FP800",
+    datecs_fp650: "Datecs FP650",
+    datecs_sk1_21f: "Datecs SK1-21F",
+    datecs_sk1_31f: "Datecs SK1-31F",
+    datecs_fmp10: "Datecs FMP10",
+    datecs_fp700: "Datecs FP700",
+    datecspay_bluepad: "DatecsPay BluePad",
+  };
+  return labels[model] || model;
 };
-const modelLabel = (model) => modelLabels[model] || model;
+const printerLabel = (printer) => {
+  if (!printer) return "";
+  const conn = printer.transport === "lan"
+    ? `${printer.ip_address || "?"}:${printer.tcp_port || 4999}`
+    : printer.port || "-";
+  return `${printer.name} (${conn})`;
+};
 
 function parseError(message) {
   if (!message) return "Unexpected error";
@@ -378,6 +404,11 @@ function App() {
   const [pinpadStatus, setPinpadStatus] = useState(null);
   const [pinpadLoading, setPinpadLoading] = useState(false);
   const [pinpadResult, setPinpadResult] = useState(null);
+  const [supportedModels, setSupportedModels] = useState(["datecs_fp700mx"]);
+  const [lanForm, setLanForm] = useState({ ip_address: "", tcp_port: "4999", name: "", model: "", operator_id: "1", operator_password: "0000", operator_till: "1" });
+  const [lanDetecting, setLanDetecting] = useState(false);
+  const [lanDetectResult, setLanDetectResult] = useState(null);
+  const [lanAdding, setLanAdding] = useState(false);
 
   const statusClass = status.type ? `status ${status.type}` : "status";
   const fiscalTotal = useMemo(
@@ -794,6 +825,13 @@ function App() {
     }
   };
 
+  const refreshModels = async () => {
+    try {
+      const data = await apiRequest("/tools/models");
+      if (data.models && data.models.length > 0) setSupportedModels(data.models);
+    } catch { /* keep fallback */ }
+  };
+
   const refreshAll = async () => {
     await Promise.all([refreshPrinters(), refreshLogs()]);
   };
@@ -1027,6 +1065,7 @@ function App() {
     refreshJobs();
     refreshLogs();
     refreshMqtt();
+    refreshModels();
     const interval = setInterval(() => {
       refreshJobs();
       refreshLogs();
@@ -1090,6 +1129,12 @@ function App() {
       }
       if (!payload.name) {
         throw new Error("Името на принтера е задължително.");
+      }
+      if (transportType === "lan" && !payload.ip_address) {
+        throw new Error("IP адресът е задължителен за LAN принтер.");
+      }
+      if (transportType === "serial" && !payload.port) {
+        throw new Error("COM портът е задължителен за Serial принтер.");
       }
       if (editingId) {
         await apiRequest(`/printers/${editingId}`, {
@@ -1348,6 +1393,9 @@ function App() {
                         <button onClick={() => refreshPrinterInfo(printer.id)} disabled={loading}>
                           🔄 Обнови инфо
                         </button>
+                        <button onClick={() => handleEdit(printer)}>
+                          ⚙️ Редактирай
+                        </button>
                         <button onClick={() => setRenamingPrinter({ id: printer.id, name: printer.name })}>
                           ✏️ Преименувай
                         </button>
@@ -1363,6 +1411,113 @@ function App() {
                 );
               })}
             </div>
+          </div>
+          )}
+
+          {editingId && (
+          <div className="card" style={{ border: "2px solid var(--primary, #2563eb)" }}>
+            <div className="card-header">
+              <div>
+                <h2>⚙️ Редактиране на принтер #{editingId}</h2>
+                <p className="muted">Промени настройките и натисни "Запази".</p>
+              </div>
+              <button onClick={resetForm}>✕ Откажи</button>
+            </div>
+            <form onSubmit={submitForm} className="form" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div className="row">
+                <label style={{ flex: 2 }}>
+                  Име *
+                  <input value={form.name} onChange={(e) => updateField("name", e.target.value)} placeholder="Име на принтера" />
+                </label>
+                <label style={{ flex: 1 }}>
+                  Модел
+                  <select value={form.model} onChange={(e) => updateField("model", e.target.value)}>
+                    {(supportedModels.includes(form.model) ? supportedModels : [form.model, ...supportedModels]).map((m) => (
+                      <option key={m} value={m}>{modelLabel(m)}</option>
+                    ))}
+                  </select>
+                </label>
+                <label style={{ flex: 1 }}>
+                  Транспорт
+                  <select value={form.transport} onChange={(e) => updateField("transport", e.target.value)}>
+                    <option value="serial">Serial (COM)</option>
+                    <option value="lan">LAN (TCP/IP)</option>
+                  </select>
+                </label>
+              </div>
+
+              {form.transport === "serial" && (
+                <div className="row">
+                  <label style={{ flex: 2 }}>
+                    COM порт
+                    <input value={form.port} onChange={(e) => updateField("port", e.target.value)} placeholder="COM3" />
+                  </label>
+                  <label style={{ flex: 1 }}>
+                    Baudrate
+                    <select value={form.baudrate} onChange={(e) => updateField("baudrate", e.target.value)}>
+                      {[9600, 19200, 38400, 57600, 115200].map((b) => (
+                        <option key={b} value={String(b)}>{b}</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              )}
+
+              {form.transport === "lan" && (
+                <div className="row">
+                  <label style={{ flex: 2 }}>
+                    IP адрес *
+                    <input value={form.ip_address} onChange={(e) => updateField("ip_address", e.target.value)} placeholder="192.168.1.100" />
+                  </label>
+                  <label style={{ flex: 1 }}>
+                    TCP порт
+                    <input type="number" min="1" max="65535" value={form.tcp_port} onChange={(e) => updateField("tcp_port", e.target.value)} placeholder="4999" />
+                  </label>
+                  <label style={{ flex: 0, alignSelf: "flex-end" }}>
+                    <button
+                      type="button"
+                      disabled={lanDetectState.status === "detecting" || !form.ip_address?.trim()}
+                      onClick={detectPrinterOnLan}
+                    >
+                      {lanDetectState.status === "detecting" ? "🔍..." : "🔍 Открий"}
+                    </button>
+                  </label>
+                </div>
+              )}
+
+              <div className="row">
+                <label>
+                  Оператор ID
+                  <input value={form.operator_id} onChange={(e) => updateField("operator_id", e.target.value)} placeholder="1" />
+                </label>
+                <label>
+                  Парола
+                  <input value={form.operator_password} onChange={(e) => updateField("operator_password", e.target.value)} placeholder="0000" />
+                </label>
+                <label>
+                  Каса
+                  <input value={form.operator_till} onChange={(e) => updateField("operator_till", e.target.value)} placeholder="1" />
+                </label>
+              </div>
+
+              <div className="row">
+                <label>
+                  <input type="checkbox" checked={form.enabled} onChange={(e) => updateField("enabled", e.target.checked)} />
+                  {" "}Активен
+                </label>
+                <label>
+                  <input type="checkbox" checked={form.dry_run} onChange={(e) => updateField("dry_run", e.target.checked)} />
+                  {" "}Dry Run (тест без печат)
+                </label>
+              </div>
+
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="primary" type="submit" disabled={loading}>
+                  {loading ? "Запазване..." : "💾 Запази промените"}
+                </button>
+                <button type="button" onClick={resetForm}>Откажи</button>
+              </div>
+            </form>
           </div>
           )}
 
@@ -1480,6 +1635,212 @@ function App() {
             )}
           </div>
 
+          <div className="card">
+            <div className="card-header">
+              <div>
+                <h2>🌐 Добави LAN принтер</h2>
+                <p className="muted">Свържи Datecs принтер по мрежа (TCP/IP)</p>
+              </div>
+            </div>
+            <div className="form" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div className="row">
+                <label style={{ flex: 2 }}>
+                  IP адрес *
+                  <input
+                    value={lanForm.ip_address}
+                    onChange={(e) => { setLanForm({ ...lanForm, ip_address: e.target.value }); setLanDetectResult(null); }}
+                    placeholder="192.168.1.100"
+                  />
+                </label>
+                <label style={{ flex: 1 }}>
+                  TCP порт
+                  <input
+                    type="number"
+                    min="1"
+                    max="65535"
+                    value={lanForm.tcp_port}
+                    onChange={(e) => { setLanForm({ ...lanForm, tcp_port: e.target.value }); setLanDetectResult(null); }}
+                    placeholder="4999"
+                  />
+                </label>
+                <label style={{ flex: 0, alignSelf: "flex-end" }}>
+                  <button
+                    className="primary"
+                    disabled={lanDetecting || !lanForm.ip_address.trim()}
+                    onClick={async () => {
+                      const ip = lanForm.ip_address.trim();
+                      const port = Number(lanForm.tcp_port) || 4999;
+                      if (!ip) { setStatus({ type: "error", message: "Въведи IP адрес." }); return; }
+                      if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip)) {
+                        setStatus({ type: "error", message: "Невалиден IP адрес (очаква се формат x.x.x.x)." }); return;
+                      }
+                      if (port < 1 || port > 65535) {
+                        setStatus({ type: "error", message: "Невалиден порт (1-65535)." }); return;
+                      }
+                      const duplicate = printers.find(p => p.transport === "lan" && p.ip_address === ip && (p.tcp_port || 4999) === port);
+                      if (duplicate) {
+                        setStatus({ type: "warning", message: `Принтер на ${ip}:${port} вече е добавен (${duplicate.name}).` }); return;
+                      }
+                      setLanDetecting(true);
+                      setLanDetectResult(null);
+                      setStatus({ type: "info", message: `Търсене на принтер на ${ip}:${port}...` });
+                      try {
+                        const result = await apiRequest("/tools/detect-printer-lan", {
+                          method: "POST",
+                          body: JSON.stringify({ ip_address: ip, tcp_port: port }),
+                        });
+                        if (result.detected) {
+                          setLanDetectResult(result);
+                          setLanForm(prev => ({
+                            ...prev,
+                            name: prev.name || `${result.name} LAN`,
+                            model: result.model || prev.model || supportedModels[0] || "datecs_fp700mx",
+                          }));
+                          setStatus({ type: "success", message: `Разпознат: ${result.name} (${result.model || "unknown"})` });
+                        } else {
+                          setLanDetectResult({ detected: false });
+                          setStatus({ type: "warning", message: result.error || "Не е открит принтер на този адрес." });
+                        }
+                      } catch (error) {
+                        setLanDetectResult({ detected: false });
+                        setStatus({ type: "error", message: `Грешка: ${error.message}` });
+                      } finally {
+                        setLanDetecting(false);
+                      }
+                    }}
+                  >
+                    {lanDetecting ? "🔍 Търсене..." : "🔍 Открий"}
+                  </button>
+                </label>
+              </div>
+
+              {lanDetectResult && lanDetectResult.detected && (
+                <div style={{ background: "var(--success-bg, #e6f9e6)", border: "1px solid #4caf50", borderRadius: 8, padding: 12 }}>
+                  <strong style={{ color: "#2e7d32" }}>✅ Разпознат: {lanDetectResult.name}</strong>
+                  <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 8 }}>
+                    {lanDetectResult.model && <span className="small"><strong>Модел:</strong> {modelLabel(lanDetectResult.model)}</span>}
+                    {lanDetectResult.serial_number && <span className="small"><strong>S/N:</strong> {lanDetectResult.serial_number}</span>}
+                    {lanDetectResult.firmware && <span className="small"><strong>FW:</strong> {lanDetectResult.firmware}</span>}
+                    {lanDetectResult.fiscal_memory_number && <span className="small"><strong>ФП:</strong> {lanDetectResult.fiscal_memory_number}</span>}
+                    {lanDetectResult.protocol && <span className="small"><strong>Протокол:</strong> {lanDetectResult.protocol}</span>}
+                  </div>
+                </div>
+              )}
+
+              {lanDetectResult && !lanDetectResult.detected && (
+                <div style={{ background: "var(--error-bg, #fde8e8)", border: "1px solid #e53935", borderRadius: 8, padding: 12 }}>
+                  <strong style={{ color: "#c62828" }}>❌ Не е открит принтер</strong>
+                  <p className="small muted" style={{ marginTop: 4 }}>Провери: 1) Принтерът е включен, 2) IP адресът е правилен, 3) TCP портът е правилен (обикновено 4999), 4) Мрежовата връзка е наред.</p>
+                </div>
+              )}
+
+              <div className="row">
+                <label style={{ flex: 2 }}>
+                  Име на принтера *
+                  <input
+                    value={lanForm.name}
+                    onChange={(e) => setLanForm({ ...lanForm, name: e.target.value })}
+                    placeholder="Datecs FP700MX LAN"
+                  />
+                </label>
+                <label style={{ flex: 1 }}>
+                  Модел *
+                  <select
+                    value={lanForm.model || (lanDetectResult?.model || supportedModels[0] || "datecs_fp700mx")}
+                    onChange={(e) => setLanForm({ ...lanForm, model: e.target.value })}
+                  >
+                    {supportedModels.map((m) => (
+                      <option key={m} value={m}>{modelLabel(m)}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div className="row">
+                <label>
+                  Оператор ID
+                  <input
+                    value={lanForm.operator_id}
+                    onChange={(e) => setLanForm({ ...lanForm, operator_id: e.target.value })}
+                    placeholder="1"
+                  />
+                </label>
+                <label>
+                  Парола
+                  <input
+                    value={lanForm.operator_password}
+                    onChange={(e) => setLanForm({ ...lanForm, operator_password: e.target.value })}
+                    placeholder="0000"
+                  />
+                </label>
+                <label>
+                  Каса
+                  <input
+                    value={lanForm.operator_till}
+                    onChange={(e) => setLanForm({ ...lanForm, operator_till: e.target.value })}
+                    placeholder="1"
+                  />
+                </label>
+              </div>
+
+              <button
+                className="primary"
+                disabled={lanAdding || !lanForm.name.trim() || !lanForm.ip_address.trim()}
+                onClick={async () => {
+                  const ip = lanForm.ip_address.trim();
+                  const port = Number(lanForm.tcp_port) || 4999;
+                  const name = lanForm.name.trim();
+                  if (!name) { setStatus({ type: "error", message: "Въведи име на принтера." }); return; }
+                  if (!ip) { setStatus({ type: "error", message: "Въведи IP адрес." }); return; }
+                  if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip)) {
+                    setStatus({ type: "error", message: "Невалиден IP адрес." }); return;
+                  }
+                  const duplicate = printers.find(p => p.transport === "lan" && p.ip_address === ip && (p.tcp_port || 4999) === port);
+                  if (duplicate) {
+                    setStatus({ type: "warning", message: `Принтер на ${ip}:${port} вече е добавен (${duplicate.name}).` }); return;
+                  }
+                  setLanAdding(true);
+                  setStatus({ type: "info", message: "Добавяне на LAN принтер..." });
+                  try {
+                    const model = lanForm.model || lanDetectResult?.model || supportedModels[0] || "datecs_fp700mx";
+                    const payload = {
+                      name,
+                      model,
+                      transport: "lan",
+                      ip_address: ip,
+                      tcp_port: port,
+                      enabled: true,
+                      config: {},
+                    };
+                    if (lanDetectResult?.serial_number) payload.serial_number = lanDetectResult.serial_number;
+                    if (lanDetectResult?.firmware) payload.firmware = lanDetectResult.firmware;
+                    if (lanDetectResult?.fiscal_memory_number) payload.fiscal_memory_number = lanDetectResult.fiscal_memory_number;
+                    const opId = lanForm.operator_id?.trim();
+                    const opPass = lanForm.operator_password?.trim();
+                    const opTill = lanForm.operator_till?.trim();
+                    if (opId && opPass && opTill) {
+                      payload.config.operator = { id: opId, password: opPass, till: opTill };
+                    }
+                    await apiRequest("/printers", {
+                      method: "POST",
+                      body: JSON.stringify(payload),
+                    });
+                    setStatus({ type: "success", message: `✅ LAN принтер "${name}" добавен успешно!` });
+                    setLanForm({ ip_address: "", tcp_port: "4999", name: "", model: "", operator_id: "1", operator_password: "0000", operator_till: "1" });
+                    setLanDetectResult(null);
+                    await refreshPrinters();
+                  } catch (error) {
+                    setStatus({ type: "error", message: error.message });
+                  } finally {
+                    setLanAdding(false);
+                  }
+                }}
+              >
+                {lanAdding ? "Добавяне..." : "➕ Добави LAN принтер"}
+              </button>
+            </div>
+          </div>
+
         </section>
       )}
 
@@ -1539,7 +1900,7 @@ function App() {
                   <option value="">Избери принтер</option>
                   {printers.map((printer) => (
                     <option key={printer.id} value={printer.id}>
-                      {printer.name} ({printer.port || "-"})
+                      {printerLabel(printer)}
                     </option>
                   ))}
                 </select>
@@ -1897,7 +2258,7 @@ function App() {
                   <option value="">Избери принтер</option>
                   {printers.map((printer) => (
                     <option key={printer.id} value={printer.id}>
-                      {printer.name} ({printer.port || "-"})
+                      {printerLabel(printer)}
                     </option>
                   ))}
                 </select>
@@ -1952,7 +2313,7 @@ function App() {
                   <option value="">Избери принтер</option>
                   {printers.map((printer) => (
                     <option key={printer.id} value={printer.id}>
-                      {printer.name} ({printer.port || "-"})
+                      {printerLabel(printer)}
                     </option>
                   ))}
                 </select>

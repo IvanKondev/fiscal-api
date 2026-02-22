@@ -177,8 +177,9 @@ def read_response(
             return parse_response(bytes(buffer), protocol_format=protocol_format, status_length=status_length)
     raise DatecsProtocolError(
         f"Timeout waiting for Datecs response after {timeout_s}s. "
-        f"Check: 1) Printer is ON, 2) Correct COM port, 3) Correct baudrate (try 9600, 19200, 38400, 57600, 115200), "
-        f"4) Cable is connected, 5) No other software is using the port."
+        f"Check: 1) Printer is ON, 2) Correct connection (COM port / IP address), "
+        f"3) Correct baudrate or TCP port, 4) Cable/network is connected, "
+        f"5) No other software is using the port."
     )
 
 
